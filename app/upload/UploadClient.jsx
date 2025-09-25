@@ -50,11 +50,21 @@ export default function UploadClient() {
       return
     }
 
-    const { projectId } = await response.json()
+    const payload = await response.json()
+    const projectId = payload?.projectId
+    const processed = payload?.processed === true
 
-    // 2. Trigger the background processing job. We don't wait for this to finish.
-    fetch(`/api/projects/${projectId}/process`, { method: 'POST' })
-      .catch(err => console.error('Failed to trigger processing job:', err));
+    if (!projectId) {
+      setError('Upload failed. Try again.')
+      setLoading(false)
+      return
+    }
+
+    // 2. Trigger the background processing job only when required.
+    if (!processed) {
+      fetch(`/api/projects/${projectId}/process`, { method: 'POST' })
+        .catch(err => console.error('Failed to trigger processing job:', err))
+    }
 
     // 3. Redirect the user immediately to the review page.
     router.push(`/review?projectId=${projectId}`)

@@ -787,6 +787,39 @@ html[data-theme="light"] .review-line {
 html[data-theme="light"] .review-line.original { color: rgba(97, 110, 145, 0.9); }
 .review-row [contenteditable="true"] { outline: none; border-radius: 12px; padding: 0.6rem; background: rgba(255, 255, 255, 0.03); border: 1px solid transparent; transition: border-color 160ms ease, box-shadow 160ms ease; }
 .review-row [contenteditable="true"]:focus { border-color: rgba(127, 91, 255, 0.55); box-shadow: 0 0 0 4px rgba(127, 91, 255, 0.18); }
+.diff-chunk { display: inline; }
+.diff-chunk--removed { color: var(--accent-danger); text-decoration: line-through; }
+.diff-chunk--added { color: var(--accent-lime); font-weight: 600; }
+.diff-preview {
+  margin-top: 0.8rem;
+  padding: 0.85rem;
+  border-radius: var(--radius-md);
+  border: 1px solid rgba(127, 91, 255, 0.18);
+  background: rgba(127, 91, 255, 0.08);
+}
+html[data-theme="light"] .diff-preview {
+  border-color: rgba(120, 168, 240, 0.26);
+  background: rgba(236, 244, 255, 0.85);
+}
+.diff-preview__label {
+  display: block;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-subtle);
+  margin-bottom: 0.35rem;
+}
+.diff-preview__line {
+  margin: 0;
+  padding: 0.45rem 0.6rem;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+html[data-theme="light"] .diff-preview__line {
+  background: rgba(236, 244, 255, 0.9);
+  border-color: rgba(120, 168, 240, 0.2);
+}
 .review-toggle {
   position: relative;
   width: 54px;

@@ -6,6 +6,8 @@ import ReviewClient from './ReviewClient'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { mapProjectRow } from '@/lib/api/project-transforms'
 import MissingSupabaseNotice from '@/components/MissingSupabaseNotice'
+import { getOfflineProject, listOfflineProjects } from '@/lib/offline-store'
+import { readOfflineUser } from '@/lib/offline-user'
 
 export const metadata = { title: 'Review — Subtitle AI' }
 
@@ -27,18 +29,22 @@ const emptyState = () => (
 
 export default async function ReviewPage({ searchParams }) {
   let supabase
-
   try {
     supabase = createSupabaseServerClient()
   } catch (error) {
-    console.error(error)
-    return <MissingSupabaseNotice action="review captions" />
+    supabase = null
+    console.warn('[review/page] Supabase client unavailable. Falling back to offline mode.', error?.message)
   }
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
 
-  if (!user) {
+  let user = null
+  if (supabase) {
+    const authResult = await supabase.auth.getUser()
+    user = authResult?.data?.user ?? null
+  }
+
+  const offlineUser = readOfflineUser()
+
+  if (supabase && !user && !offlineUser) {
     redirect('/auth/sign-in?redirectTo=/review')
   }
 
@@ -70,14 +76,45 @@ export default async function ReviewPage({ searchParams }) {
     projectQuery = projectQuery.order('created_at', { ascending: false }).limit(1)
   }
 
-  const { data: projects, error } = await projectQuery
+  let projects
+  let error
+
+  if (supabase && user) {
+    try {
+      const response = await projectQuery
+      projects = response.data
+      error = response.error
+    } catch (err) {
+      error = err
+    }
+  }
 
   if (error) {
-    throw error
+    console.error('[review/page] failed to fetch project', error)
+  }
+
+  if (!projects || (Array.isArray(projects) && projects.length === 0)) {
+    if (projectId) {
+      const offlineProject = getOfflineProject({ userId: (user?.id) || offlineUser?.id, projectId })
+      if (offlineProject) {
+        return <ReviewClient project={offlineProject} />
+      }
+    } else {
+      const offlineProjects = listOfflineProjects({ userId: (user?.id) || offlineUser?.id })
+      if (offlineProjects.length) {
+        const sorted = offlineProjects.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+        return <ReviewClient project={sorted[0]} />
+      }
+    }
+
+    if (!supabase) {
+      return <MissingSupabaseNotice action="review captions" />
+    }
+
+    return emptyState()
   }
 
   const projectRow = Array.isArray(projects) ? projects[0] : projects
-
   if (!projectRow) {
     return emptyState()
   }

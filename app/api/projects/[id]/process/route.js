@@ -55,7 +55,37 @@ export async function POST(req, { params }) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const supabase = createSupabaseServiceClient()
+  const supabase = process.env.SUPABASE_SERVICE_ROLE_KEY
+    ? createSupabaseServiceClient()
+    : serverSupabase
+
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    console.warn('[projects/process] SUPABASE_SERVICE_ROLE_KEY not set; using user-scoped client fallback')
+  }
+
+  const {
+    data: existingSegments,
+    error: existingSegmentsError,
+  } = await supabase
+    .from('review_segments')
+    .select('id')
+    .eq('project_id', project.id)
+    .limit(1)
+
+  if (existingSegmentsError) {
+    console.error('Failed to check existing project segments:', existingSegmentsError)
+    return NextResponse.json({ error: 'Unable to verify project state.' }, { status: 500 })
+  }
+
+  if (Array.isArray(existingSegments) && existingSegments.length) {
+    if (project.status !== 'review') {
+      await supabase
+        .from('projects')
+        .update({ status: 'review' })
+        .eq('id', projectId)
+    }
+    return NextResponse.json({ message: 'Project already processed.' })
+  }
 
   // 1. Fetch the project details
   // 2. Download the source file from storage

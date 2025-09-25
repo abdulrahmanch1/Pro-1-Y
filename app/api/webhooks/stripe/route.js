@@ -10,17 +10,41 @@ const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 async function handleCheckoutSessionCompleted(session) {
   const supabase = createSupabaseServiceClient();
-  const { userId, amountCents } = session.metadata;
+  const { metadata = {} } = session;
+  const userId = metadata.userId;
+  const amountCents = Number(metadata.amountCents);
 
-  if (!userId || !amountCents) {
+  if (!userId || !Number.isFinite(amountCents) || amountCents <= 0) {
     console.error('Webhook received with missing metadata:', session.id);
     return NextResponse.json({ error: 'Missing metadata in webhook' }, { status: 400 });
+  }
+
+  // Prevent double crediting if Stripe retries the webhook.
+  const { data: existingTx, error: fetchError } = await supabase
+    .from('wallet_transactions')
+    .select('id, status')
+    .eq('external_ref', session.id)
+    .maybeSingle();
+
+  if (fetchError) {
+    console.error('Failed to check existing wallet transaction:', fetchError);
+    return NextResponse.json({ error: 'Unable to verify transaction state.' }, { status: 500 });
+  }
+
+  if (existingTx) {
+    if (existingTx.status !== 'succeeded') {
+      await supabase
+        .from('wallet_transactions')
+        .update({ status: 'succeeded' })
+        .eq('id', existingTx.id);
+    }
+    return NextResponse.json({ received: true });
   }
 
   const { error } = await supabase.from('wallet_transactions').insert({
     user_id: userId,
     type: 'top_up',
-    amount_cents: Number(amountCents),
+    amount_cents: amountCents,
     description: 'Stripe top-up',
     status: 'succeeded',
     external_ref: session.id, // Store Stripe session ID for reference

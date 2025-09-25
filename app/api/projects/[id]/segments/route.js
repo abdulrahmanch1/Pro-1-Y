@@ -2,15 +2,22 @@ import { NextResponse } from 'next/server'
 
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { mapSegmentRow } from '@/lib/api/project-transforms'
+import { getOfflineProject, updateOfflineSegments } from '@/lib/offline-store'
+import { ensureOfflineUser, persistOfflineUserCookie, readOfflineUser } from '@/lib/offline-user'
 
 export async function PATCH(req, { params }) {
-  const supabase = createSupabaseServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  let supabase
+  try {
+    supabase = createSupabaseServerClient()
+  } catch (error) {
+    supabase = null
+    console.warn('[api/projects/:id/segments] Supabase client unavailable, using offline store.')
+  }
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  let user = null
+  if (supabase) {
+    const authResult = await supabase.auth.getUser()
+    user = authResult?.data?.user ?? null
   }
 
   const projectId = params.id
@@ -20,36 +27,93 @@ export async function PATCH(req, { params }) {
     return NextResponse.json({ error: 'No updates supplied' }, { status: 400 })
   }
 
-  const payload = updates.map((item) => ({
-    id: item.id,
-    accepted: typeof item.accepted === 'boolean' ? item.accepted : undefined,
-    edited_text: typeof item.editedText === 'string' ? item.editedText : undefined,
-    proposed_text: typeof item.proposedText === 'string' ? item.proposedText : undefined,
-  }))
+  const normalizedUpdates = updates
+    .map((item) => {
+      const payload = {
+        id: item.id,
+      }
 
-  const applied = []
-  for (const row of payload) {
-    const { id, ...fields } = row
-    const update = Object.fromEntries(
-      Object.entries(fields).filter(([_, value]) => value !== undefined)
-    )
+      if (typeof item.accepted === 'boolean') {
+        payload.accepted = item.accepted
+      }
+      if (typeof item.editedText === 'string') {
+        payload.editedText = item.editedText
+      }
+      if (typeof item.proposedText === 'string') {
+        payload.proposedText = item.proposedText
+      }
 
-    if (!id || Object.keys(update).length === 0) continue
+      return payload
+    })
+    .filter((row) => row.id && (row.accepted !== undefined || row.editedText !== undefined || row.proposedText !== undefined))
 
-    const { data, error } = await supabase
-      .from('review_segments')
-      .update(update)
-      .eq('id', id)
-      .eq('project_id', projectId)
-      .select('id, index, ts_start_ms, ts_end_ms, original_text, proposed_text, accepted, edited_text')
-      .maybeSingle()
-
-    if (error) {
-      return NextResponse.json({ error: error.message }, { status: 500 })
-    }
-
-    if (data) applied.push(mapSegmentRow(data))
+  if (!normalizedUpdates.length) {
+    return NextResponse.json({ error: 'No valid updates supplied' }, { status: 400 })
   }
+
+  const offlineUser = user ? { id: user.id } : readOfflineUser()
+  const offlineProject = offlineUser ? getOfflineProject({ userId: offlineUser.id, projectId }) : null
+  if (offlineProject) {
+    const targetUser = offlineUser ?? ensureOfflineUser()
+    const applied = updateOfflineSegments({ userId: targetUser.id, projectId, updates: normalizedUpdates }) || []
+    const response = NextResponse.json({ segments: applied })
+    return persistOfflineUserCookie(response, targetUser)
+  }
+
+  if (!supabase || !user) {
+    const offlineUserContext = ensureOfflineUser()
+    const response = NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    return persistOfflineUserCookie(response, offlineUserContext)
+  }
+
+  const rowsToUpdate = normalizedUpdates
+    .map((row) => {
+      const { id, accepted, editedText, proposedText } = row
+      const update = {}
+
+      if (accepted !== undefined) update.accepted = accepted
+      if (editedText !== undefined) update.edited_text = editedText
+      if (proposedText !== undefined) update.proposed_text = proposedText
+
+      return { id, ...update }
+    })
+    .filter((row) => Object.keys(row).length > 1)
+
+  if (!rowsToUpdate.length) {
+    return NextResponse.json({ error: 'No valid updates supplied' }, { status: 400 })
+  }
+
+  const updateIds = rowsToUpdate.map((row) => row.id)
+
+  const { data: existingRows = [], error: existingError } = await supabase
+    .from('review_segments')
+    .select('id')
+    .eq('project_id', projectId)
+    .in('id', updateIds)
+
+  if (existingError) {
+    return NextResponse.json({ error: existingError.message }, { status: 500 })
+  }
+
+  const existingIds = new Set(existingRows.map((row) => row.id))
+  const filteredRows = rowsToUpdate
+    .filter((row) => existingIds.has(row.id))
+    .map((row) => ({ ...row, project_id: projectId }))
+
+  if (!filteredRows.length) {
+    return NextResponse.json({ error: 'No matching segments found for update' }, { status: 404 })
+  }
+
+  const { data, error } = await supabase
+    .from('review_segments')
+    .upsert(filteredRows, { onConflict: 'id' })
+    .select('id, index, ts_start_ms, ts_end_ms, original_text, proposed_text, accepted, edited_text')
+
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 })
+  }
+
+  const applied = Array.isArray(data) ? data.map(mapSegmentRow) : []
 
   return NextResponse.json({ segments: applied })
 }

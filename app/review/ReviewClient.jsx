@@ -3,6 +3,7 @@
 import { useCallback, useMemo, useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
 import { useDebounce } from '@/hooks/useDebounce'
+import { diffWords } from '@/lib/diff/words'
 
 const formatTime = (ms) => {
   const hours = Math.floor(ms / 3_600_000)
@@ -42,6 +43,75 @@ const ErrorState = () => (
   </div>
 );
 
+const DiffPreview = ({ tokens }) => {
+  if (!tokens.length) return null
+  const hasChanges = tokens.some((token) => token.type !== 'equal')
+  if (!hasChanges) return null
+
+  const renderTokens = tokens.map((token, index) => {
+    if (token.type === 'delete') return null
+    const className = token.type === 'delete'
+      ? 'diff-chunk diff-chunk--removed'
+      : token.type === 'insert'
+        ? 'diff-chunk diff-chunk--added'
+        : 'diff-chunk'
+    return <span key={index} className={className}>{token.value}</span>
+  })
+
+  return (
+    <div className="diff-preview">
+      <span className="diff-preview__label">Edited preview</span>
+      <pre className="review-line diff-preview__line">
+        {renderTokens}
+      </pre>
+    </div>
+  )
+}
+
+const ReviewSegmentRow = ({ segment, onToggleAccept, onTextEdit }) => {
+  const currentText = segment.editedText || segment.proposedText || segment.originalText
+  const tokens = useMemo(() => diffWords(segment.originalText || '', currentText || ''), [segment.originalText, currentText])
+
+  return (
+    <article className="review-row">
+      <div className="stack">
+        <div className="flex" style={{alignItems:'center'}}>
+          <span className={`badge ${segment.accepted ? 'badge--ok' : 'badge--warn'}`}>
+            {segment.accepted ? 'Proposed' : 'Original'}
+          </span>
+          <code style={{color:'var(--text-subtle)'}}>{buildRange(segment)}</code>
+        </div>
+        <pre className="review-line original">
+          {tokens.length
+            ? tokens.map((token, index) => {
+                if (token.type === 'insert') return null
+                const className = token.type === 'delete' ? 'diff-chunk diff-chunk--removed' : 'diff-chunk'
+                return <span key={index} className={className}>{token.value}</span>
+              })
+            : segment.originalText}
+        </pre>
+        <pre
+          className="review-line"
+          contentEditable
+          suppressContentEditableWarning
+          onInput={(event) => onTextEdit(segment.id, event.currentTarget.textContent || '')}
+        >{currentText}</pre>
+        <DiffPreview tokens={tokens} />
+      </div>
+      <div className="flex" style={{alignItems:'center'}}>
+        <div
+          role="switch"
+          aria-checked={segment.accepted}
+          className="review-toggle"
+          data-on={segment.accepted ? 'true' : 'false'}
+          onClick={() => onToggleAccept(segment.id, !segment.accepted)}
+          title={segment.accepted ? 'Keep proposed change' : 'Revert to original'}
+        />
+      </div>
+    </article>
+  )
+}
+
 export default function ReviewClient({ project }) {
   const [segments, setSegments] = useState(project.segments)
   const [saving, setSaving] = useState(false)
@@ -59,26 +129,29 @@ export default function ReviewClient({ project }) {
     setSaving(true)
     setError(null)
 
-    const response = await fetch(`/api/projects/${project.id}/segments`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ updates }),
-    })
+    try {
+      const response = await fetch(`/api/projects/${project.id}/segments`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ updates }),
+      })
 
-    setSaving(false)
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload.error || 'Failed to save changes.')
+      }
 
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}))
-      setError(payload.error || 'Failed to save changes.')
-      return
-    }
-
-    const payload = await response.json()
-    if (Array.isArray(payload.segments)) {
-      setSegments((prev) => prev.map((segment) => {
-        const next = payload.segments.find((item) => item.id === segment.id)
-        return next ? { ...segment, ...next } : segment
-      }))
+      const payload = await response.json()
+      if (Array.isArray(payload.segments)) {
+        setSegments((prev) => prev.map((segment) => {
+          const next = payload.segments.find((item) => item.id === segment.id)
+          return next ? { ...segment, ...next } : segment
+        }))
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to save changes.')
+    } finally {
+      setSaving(false)
     }
   }, [project.id])
 
@@ -109,25 +182,29 @@ export default function ReviewClient({ project }) {
     })
   }, [persistUpdates])
 
-  const download = async () => {
+  const download = useCallback(async () => {
     setExporting(true)
     setError(null)
-    const response = await fetch(`/api/projects/${project.id}/export`, {
-      method: 'POST',
-    })
-    setExporting(false)
+    try {
+      const response = await fetch(`/api/projects/${project.id}/export`, {
+        method: 'POST',
+      })
 
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}))
-      setError(payload.error || 'Export failed. Try again.')
-      return
-    }
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload.error || 'Export failed. Try again.')
+      }
 
-    const payload = await response.json()
-    if (payload.downloadUrl) {
-      window.location.href = payload.downloadUrl
+      const payload = await response.json()
+      if (payload.downloadUrl) {
+        window.location.href = payload.downloadUrl
+      }
+    } catch (err) {
+      setError(err.message || 'Export failed. Try again.')
+    } finally {
+      setExporting(false)
     }
-  }
+  }, [project.id])
 
   const acceptedCount = useMemo(() => segments.filter((segment) => segment.accepted).length, [segments])
 
@@ -175,33 +252,12 @@ export default function ReviewClient({ project }) {
 
           <div className="review-list">
             {segments.map((segment) => (
-              <article key={segment.id} className="review-row">
-                <div className="stack">
-                  <div className="flex" style={{alignItems:'center'}}>
-                    <span className={`badge ${segment.accepted ? 'badge--ok' : 'badge--warn'}`}>
-                      {segment.accepted ? 'Proposed' : 'Original'}
-                    </span>
-                    <code style={{color:'var(--text-subtle)'}}>{buildRange(segment)}</code>
-                  </div>
-                  <pre className="review-line original">{segment.originalText}</pre>
-                  <pre
-                    className="review-line"
-                    contentEditable
-                    suppressContentEditableWarning
-                    onInput={(event) => handleTextEdit(segment.id, event.currentTarget.textContent || '')}
-                  >{segment.editedText || segment.proposedText || segment.originalText}</pre>
-                </div>
-                <div className="flex" style={{alignItems:'center'}}>
-                  <div
-                    role="switch"
-                    aria-checked={segment.accepted}
-                    className="review-toggle"
-                    data-on={segment.accepted ? 'true' : 'false'}
-                    onClick={() => setAccept(segment.id, !segment.accepted)}
-                    title={segment.accepted ? 'Keep proposed change' : 'Revert to original'}
-                  />
-                </div>
-              </article>
+              <ReviewSegmentRow
+                key={segment.id}
+                segment={segment}
+                onToggleAccept={setAccept}
+                onTextEdit={handleTextEdit}
+              />
             ))}
           </div>
         </>

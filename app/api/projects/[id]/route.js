@@ -2,49 +2,66 @@ import { NextResponse } from 'next/server'
 
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { mapProjectRow } from '@/lib/api/project-transforms'
+import { getOfflineProject } from '@/lib/offline-store'
+import { readOfflineUser } from '@/lib/offline-user'
 
 export async function GET(req, { params }) {
-  const supabase = createSupabaseServerClient()
-  const {
-    data: { user },
-  } = await supabase.auth.getUser()
+  let supabase
+  try {
+    supabase = createSupabaseServerClient()
+  } catch (error) {
+    supabase = null
+    console.warn('[api/projects/:id] Supabase client unavailable, checking offline store.')
+  }
 
-  if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  let user = null
+  if (supabase) {
+    const authResult = await supabase.auth.getUser()
+    user = authResult?.data?.user ?? null
   }
 
   const projectId = params.id
-  const { data: project, error } = await supabase
-    .from('projects')
-    .select(`
-      id,
-      title,
-      status,
-      source_file_name,
-      source_file_path,
-      created_at,
-      segments:review_segments(
+  if (supabase && user) {
+    const { data: project, error } = await supabase
+      .from('projects')
+      .select(`
         id,
-        index,
-        ts_start_ms,
-        ts_end_ms,
-        original_text,
-        proposed_text,
-        accepted,
-        edited_text
-      )
-    `)
-    .eq('id', projectId)
-    .eq('user_id', user.id)
-    .maybeSingle()
+        title,
+        status,
+        source_file_name,
+        source_file_path,
+        created_at,
+        segments:review_segments(
+          id,
+          index,
+          ts_start_ms,
+          ts_end_ms,
+          original_text,
+          proposed_text,
+          accepted,
+          edited_text
+        )
+      `)
+      .eq('id', projectId)
+      .eq('user_id', user.id)
+      .maybeSingle()
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+    if (error) {
+      console.error('[api/projects/:id] failed to fetch project', error)
+    } else if (project) {
+      return NextResponse.json(mapProjectRow(project))
+    }
   }
 
-  if (!project) {
+  const offlineUser = user ? { id: user.id } : readOfflineUser()
+  if (!offlineUser) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+
+  const offline = getOfflineProject({ userId: offlineUser.id, projectId })
+  if (!offline) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  return NextResponse.json(mapProjectRow(project))
+  return NextResponse.json(offline)
 }
