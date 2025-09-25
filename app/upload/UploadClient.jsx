@@ -37,21 +37,27 @@ export default function UploadClient() {
     formData.append('file', file)
     if (projectName) formData.append('title', projectName)
 
+    // 1. Create the project and upload the file.
     const response = await fetch('/api/projects', {
       method: 'POST',
       body: formData,
     })
 
-    setLoading(false)
-
     if (!response.ok) {
       const payload = await response.json().catch(() => ({}))
       setError(payload.error || 'Upload failed. Try again.')
+      setLoading(false)
       return
     }
 
-    const payload = await response.json()
-    router.push(`/review?projectId=${payload.projectId}`)
+    const { projectId } = await response.json()
+
+    // 2. Trigger the background processing job. We don't wait for this to finish.
+    fetch(`/api/projects/${projectId}/process`, { method: 'POST' })
+      .catch(err => console.error('Failed to trigger processing job:', err));
+
+    // 3. Redirect the user immediately to the review page.
+    router.push(`/review?projectId=${projectId}`)
   }
 
   return (

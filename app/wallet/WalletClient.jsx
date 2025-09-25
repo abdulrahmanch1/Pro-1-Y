@@ -1,8 +1,10 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
+import { useSearchParams } from 'next/navigation'
+import { loadStripe } from '@stripe/stripe-js'
 
-const formatCurrency = (cents) => `$${(Number(cents || 0) / 100).toFixed(2)}`
+const formatCurrency = (cents) => `${(Number(cents || 0) / 100).toFixed(2)}`
 
 const formatDate = (value) => {
   const date = new Date(value)
@@ -10,33 +12,57 @@ const formatDate = (value) => {
   return date.toLocaleDateString()
 }
 
+// Lazily load the Stripe instance
+const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '');
+
 export default function WalletClient({ balanceCents, transactions }) {
   const [balance, setBalance] = useState(balanceCents)
   const [items, setItems] = useState(transactions)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [successMessage, setSuccessMessage] = useState('')
+
+  const searchParams = useSearchParams();
+
+  useEffect(() => {
+    if (searchParams.get('payment_success')) {
+      setSuccessMessage('Payment successful! Your balance has been updated.');
+    }
+    if (searchParams.get('payment_canceled')) {
+      setError('Payment was canceled.');
+    }
+  }, [searchParams]);
 
   const topUp = async (amount) => {
     setLoading(true)
     setError(null)
-    const response = await fetch('/api/wallet', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount }),
-    })
+    setSuccessMessage('')
 
-    setLoading(false)
+    try {
+      const response = await fetch('/api/wallet/checkout', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount }),
+      });
 
-    if (!response.ok) {
-      const payload = await response.json().catch(() => ({}))
-      setError(payload.error || 'Unable to add funds right now.')
-      return
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}))
+        throw new Error(payload.error || 'Failed to create payment session.');
+      }
+
+      const { sessionId } = await response.json();
+      const stripe = await stripePromise;
+      if (!stripe) throw new Error('Stripe.js is not loaded.');
+
+      const { error } = await stripe.redirectToCheckout({ sessionId });
+
+      if (error) {
+        throw new Error(error.message);
+      }
+    } catch (err) {
+      setError(err.message);
+      setLoading(false);
     }
-
-    const payload = await response.json()
-    const transaction = payload.transaction
-    setItems((prev) => [transaction, ...prev])
-    setBalance((prev) => prev + Number(transaction.amount_cents || 0))
   }
 
   return (
@@ -78,6 +104,11 @@ export default function WalletClient({ balanceCents, transactions }) {
               <span>{error}</span>
             </div>
           ) : null}
+          {successMessage ? (
+            <div className="alert alert-success mt-3">
+              <span>{successMessage}</span>
+            </div>
+          ) : null}
         </div>
 
         <div className="card card--stretch" style={{gridColumn:'1 / -1'}}>
@@ -94,10 +125,10 @@ export default function WalletClient({ balanceCents, transactions }) {
             <tbody>
               {items.map((transaction) => (
                 <tr key={transaction.id}>
-                  <td>{formatDate(transaction.created_at)}</td>
-                  <td>{transaction.type === 'charge' ? 'Caption export' : 'Top up'}</td>
-                  <td>{formatCurrency(transaction.amount_cents)}</td>
-                  <td><span className="badge badge--ok">{transaction.status}</span></td>
+                  <td data-label="Date">{formatDate(transaction.created_at)}</td>
+                  <td data-label="Type">{transaction.type === 'charge' ? 'Caption export' : 'Top up'}</td>
+                  <td data-label="Amount">{formatCurrency(transaction.amount_cents)}</td>
+                  <td data-label="Status"><span className="badge badge--ok">{transaction.status}</span></td>
                 </tr>
               ))}
               {!items.length ? (

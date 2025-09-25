@@ -29,18 +29,19 @@ export async function PATCH(req, { params }) {
 
   const applied = []
   for (const row of payload) {
+    const { id, ...fields } = row
     const update = Object.fromEntries(
-      Object.entries(row).filter(([_, value]) => value !== undefined)
+      Object.entries(fields).filter(([_, value]) => value !== undefined)
     )
 
-    if (!update.id) continue
+    if (!id || Object.keys(update).length === 0) continue
 
     const { data, error } = await supabase
       .from('review_segments')
       .update(update)
-      .eq('id', update.id)
+      .eq('id', id)
       .eq('project_id', projectId)
-      .select('id, accepted, edited_text, proposed_text')
+      .select('id, index, ts_start_ms, ts_end_ms, original_text, proposed_text, accepted, edited_text')
       .maybeSingle()
 
     if (error) {

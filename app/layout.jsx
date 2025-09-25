@@ -1,7 +1,8 @@
 import './globals.css'
 import React from 'react'
 import SiteHeader from '../components/SiteHeader'
-import ThemeDock from '../components/ThemeDock'
+import ThemeToggle from '../components/ThemeToggle'
+import ThemeScript from '../components/ThemeScript'
 
 export const metadata = {
   title: 'Subtitle AI — Clean up SRT/VTT with AI',
@@ -12,8 +13,9 @@ export const metadata = {
 
 export default function RootLayout({ children }) {
   return (
-    <html lang="en" dir="ltr" data-theme="dark">
+    <html lang="en" dir="ltr" suppressHydrationWarning>
       <body>
+        <ThemeScript />
         <div className="page-frame">
           <SiteHeader />
           <main className="container">{children}</main>
@@ -28,7 +30,7 @@ export default function RootLayout({ children }) {
             </div>
           </footer>
         </div>
-        <ThemeDock />
+        <ThemeToggle />
       </body>
     </html>
   )

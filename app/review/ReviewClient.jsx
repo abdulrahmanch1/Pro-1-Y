@@ -1,6 +1,8 @@
 'use client'
 
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo, useState, useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+import { useDebounce } from '@/hooks/useDebounce'
 
 const formatTime = (ms) => {
   const hours = Math.floor(ms / 3_600_000)
@@ -13,11 +15,42 @@ const formatTime = (ms) => {
 
 const buildRange = (segment) => `${formatTime(segment.tsStartMs)} --> ${formatTime(segment.tsEndMs)}`
 
+const ProcessingState = () => {
+  const router = useRouter();
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      router.refresh();
+    }, 3000); // Poll every 3 seconds
+
+    return () => clearTimeout(timer);
+  }, [router]);
+
+  return (
+    <div className="card" style={{marginTop:'2rem', textAlign: 'center'}}>
+      <span className="tag">Processing</span>
+      <h3 className="mt-3">Preparing your captions...</h3>
+      <p>Your file is being processed on the server. This page will automatically update when it's ready for review.</p>
+      <p className="upload-hint mt-3">You can safely leave this page and come back later.</p>
+    </div>
+  );
+};
+
+const ErrorState = () => (
+  <div className="alert alert-error" style={{marginTop:'2rem'}}>
+    <span>There was an error processing your file. Please try uploading it again.</span>
+  </div>
+);
+
 export default function ReviewClient({ project }) {
   const [segments, setSegments] = useState(project.segments)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
   const [exporting, setExporting] = useState(false)
+
+  // State for debouncing text edits
+  const [editText, setEditText] = useState(null)
+  const debouncedEditText = useDebounce(editText, 750)
 
   const projectTitle = project.title || project.sourceFileName || 'Untitled project'
 
@@ -49,18 +82,24 @@ export default function ReviewClient({ project }) {
     }
   }, [project.id])
 
+  // Effect to save debounced text changes
+  useEffect(() => {
+    if (debouncedEditText) {
+      persistUpdates([{ id: debouncedEditText.id, editedText: debouncedEditText.text }])
+    }
+  }, [debouncedEditText, persistUpdates])
+
   const setAccept = useCallback((segmentId, accepted) => {
     setSegments((prev) => prev.map((segment) => segment.id === segmentId ? { ...segment, accepted } : segment))
     persistUpdates([{ id: segmentId, accepted }])
   }, [persistUpdates])
 
-  const setEditedText = useCallback((segmentId, editedText) => {
-    setSegments((prev) => prev.map((segment) => segment.id === segmentId ? { ...segment, editedText } : segment))
+  const handleTextEdit = useCallback((segmentId, newText) => {
+    // Update the UI state immediately for responsiveness
+    setSegments((prev) => prev.map((segment) => segment.id === segmentId ? { ...segment, editedText: newText } : segment))
+    // Set the value to be debounced and saved
+    setEditText({ id: segmentId, text: newText })
   }, [])
-
-  const commitEditedText = useCallback((segmentId, editedText) => {
-    persistUpdates([{ id: segmentId, editedText }])
-  }, [persistUpdates])
 
   const acceptAll = useCallback((value) => {
     setSegments((prev) => {
@@ -92,6 +131,9 @@ export default function ReviewClient({ project }) {
 
   const acceptedCount = useMemo(() => segments.filter((segment) => segment.accepted).length, [segments])
 
+  const isProcessing = project.status === 'processing';
+  const isError = project.status === 'error';
+
   return (
     <section className="section">
       <div className="section-header">
@@ -100,67 +142,70 @@ export default function ReviewClient({ project }) {
         <p>Swipe through improvements, toggle what to keep, and edit inline. Changes auto-save to Supabase.</p>
       </div>
 
-      <div className="review-toolbar mt-4">
-        <div className="review-stepper">
-          <span>Upload</span>
-          <span aria-hidden>›</span>
-          <span>Review</span>
-          <span aria-hidden>›</span>
-          <span>Download</span>
-        </div>
-        <div className="flex" style={{alignItems:'center', gap: '0.8rem'}}>
-          <span className="tag">{acceptedCount}/{segments.length} accepted</span>
-          <button className="btn btn-outline" type="button" onClick={() => acceptAll(true)}>Accept all</button>
-          <button className="btn btn-ghost" type="button" onClick={() => acceptAll(false)}>Reject all</button>
-          <button className="btn btn-primary" type="button" onClick={download} disabled={exporting}>
-            {exporting ? 'Preparing…' : 'Download captions'}
-          </button>
-        </div>
-      </div>
-
-      {saving ? (
-        <div className="alert alert-info" style={{marginTop:'1rem'}}>
-          <span>Saving changes…</span>
-        </div>
-      ) : null}
-      {error ? (
-        <div className="alert alert-error" style={{marginTop:'1rem'}}>
-          <span>{error}</span>
-        </div>
-      ) : null}
-
-      <div className="review-list">
-        {segments.map((segment) => (
-          <article key={segment.id} className="review-row">
-            <div className="stack">
-              <div className="flex" style={{alignItems:'center'}}>
-                <span className={`badge ${segment.accepted ? 'badge--ok' : 'badge--warn'}`}>
-                  {segment.accepted ? 'Proposed' : 'Original'}
-                </span>
-                <code style={{color:'var(--text-subtle)'}}>{buildRange(segment)}</code>
-              </div>
-              <pre className="review-line original">{segment.originalText}</pre>
-              <pre
-                className="review-line"
-                contentEditable
-                suppressContentEditableWarning
-                onInput={(event) => setEditedText(segment.id, event.currentTarget.textContent || '')}
-                onBlur={(event) => commitEditedText(segment.id, event.currentTarget.textContent || '')}
-              >{segment.editedText || segment.proposedText || segment.originalText}</pre>
+      {isProcessing ? <ProcessingState /> : isError ? <ErrorState /> : (
+        <>
+          <div className="review-toolbar mt-4">
+            <div className="review-stepper">
+              <span>Upload</span>
+              <span aria-hidden>›</span>
+              <span>Review</span>
+              <span aria-hidden>›</span>
+              <span>Download</span>
             </div>
-            <div className="flex" style={{alignItems:'center'}}>
-              <div
-                role="switch"
-                aria-checked={segment.accepted}
-                className="review-toggle"
-                data-on={segment.accepted ? 'true' : 'false'}
-                onClick={() => setAccept(segment.id, !segment.accepted)}
-                title={segment.accepted ? 'Keep proposed change' : 'Revert to original'}
-              />
+            <div className="flex" style={{alignItems:'center', gap: '0.8rem'}}>
+              <span className="tag">{acceptedCount}/{segments.length} accepted</span>
+              <button className="btn btn-outline" type="button" onClick={() => acceptAll(true)}>Accept all</button>
+              <button className="btn btn-ghost" type="button" onClick={() => acceptAll(false)}>Reject all</button>
+              <button className="btn btn-primary" type="button" onClick={download} disabled={exporting}>
+                {exporting ? 'Preparing…' : 'Download captions'}
+              </button>
             </div>
-          </article>
-        ))}
-      </div>
+          </div>
+
+          {saving ? (
+            <div className="alert alert-info" style={{marginTop:'1rem'}}>
+              <span>Saving changes…</span>
+            </div>
+          ) : null}
+          {error ? (
+            <div className="alert alert-error" style={{marginTop:'1rem'}}>
+              <span>{error}</span>
+            </div>
+          ) : null}
+
+          <div className="review-list">
+            {segments.map((segment) => (
+              <article key={segment.id} className="review-row">
+                <div className="stack">
+                  <div className="flex" style={{alignItems:'center'}}>
+                    <span className={`badge ${segment.accepted ? 'badge--ok' : 'badge--warn'}`}>
+                      {segment.accepted ? 'Proposed' : 'Original'}
+                    </span>
+                    <code style={{color:'var(--text-subtle)'}}>{buildRange(segment)}</code>
+                  </div>
+                  <pre className="review-line original">{segment.originalText}</pre>
+                  <pre
+                    className="review-line"
+                    contentEditable
+                    suppressContentEditableWarning
+                    onInput={(event) => handleTextEdit(segment.id, event.currentTarget.textContent || '')}
+                  >{segment.editedText || segment.proposedText || segment.originalText}</pre>
+                </div>
+                <div className="flex" style={{alignItems:'center'}}>
+                  <div
+                    role="switch"
+                    aria-checked={segment.accepted}
+                    className="review-toggle"
+                    data-on={segment.accepted ? 'true' : 'false'}
+                    onClick={() => setAccept(segment.id, !segment.accepted)}
+                    title={segment.accepted ? 'Keep proposed change' : 'Revert to original'}
+                  />
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
+      )}
     </section>
   )
 }

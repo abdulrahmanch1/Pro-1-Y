@@ -53,10 +53,12 @@ export default function SignUpClient() {
       setError('Supabase environment variables are not configured. See README.md to connect Supabase.')
       return
     }
+    const redirectUrl = new URL('/auth/callback', window.location.origin)
+    redirectUrl.searchParams.set('redirect', '/upload')
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: redirectUrl.toString(),
       },
     })
 

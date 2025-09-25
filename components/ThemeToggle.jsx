@@ -1,29 +1,33 @@
-"use client"
+'use client'
 import React from 'react'
 
-export default function ThemeToggle({ onThemeChange }) {
+export default function ThemeToggle({ onThemeChange } = {}) {
   const [ready, setReady] = React.useState(false)
   const [theme, setTheme] = React.useState('dark')
   const timeoutRef = React.useRef(null)
   React.useEffect(() => {
-    const saved = typeof window !== 'undefined' ? localStorage.getItem('theme') : null
-    const initial = saved || 'dark'
-    setTheme(initial)
-    document.documentElement.setAttribute('data-theme', initial)
-    onThemeChange?.(initial)
-    setReady(true)
-  }, [])
+    // The theme is now set by ThemeScript, so we just read the current theme from
+    // the DOM to ensure the toggle button's state is in sync.
+    const currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+    setTheme(currentTheme);
+    if (typeof onThemeChange === 'function') {
+      onThemeChange(currentTheme);
+    }
+    setReady(true);
+  }, [onThemeChange])
   const toggle = () => {
     const next = theme === 'dark' ? 'light' : 'dark'
     setTheme(next)
     document.documentElement.setAttribute('data-theme', next)
     localStorage.setItem('theme', next)
+    if (typeof onThemeChange === 'function') {
+      onThemeChange(next)
+    }
     document.documentElement.classList.add('theme-switching')
     window.clearTimeout(timeoutRef.current || undefined)
     timeoutRef.current = window.setTimeout(() => {
       document.documentElement.classList.remove('theme-switching')
     }, 900)
-    onThemeChange?.(next)
   }
   React.useEffect(() => () => {
     window.clearTimeout(timeoutRef.current || undefined)
