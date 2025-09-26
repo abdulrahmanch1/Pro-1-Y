@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { createSupabaseServiceClient } from '@/lib/supabase/service'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { parseSrt } from '@/lib/parsers/srt'
-import { generateCaptionSuggestions } from '@/lib/ai/chatgpt'
+import { generateRewriteSuggestions } from '@/lib/ai/rewrite'
 
 export const runtime = 'nodejs'
 
@@ -10,6 +10,8 @@ export const runtime = 'nodejs'
 // It handles the heavy processing of parsing the file and creating the segments.
 export async function POST(req, { params }) {
   const { id: projectId } = params
+
+  console.log('[projects/process] handler start', { projectId })
 
   let serverSupabase
   try {
@@ -19,10 +21,14 @@ export async function POST(req, { params }) {
     return NextResponse.json({ error: 'Supabase is not configured.' }, { status: 500 })
   }
 
+  console.log('[projects/process] created server client', { projectId })
+
   const {
     data: { user },
     error: authError,
   } = await serverSupabase.auth.getUser()
+
+  console.log('[projects/process] fetched user', { projectId, hasUser: Boolean(user), authError })
 
   if (authError) {
     console.error('Supabase auth failed while processing project:', authError)
@@ -38,9 +44,11 @@ export async function POST(req, { params }) {
     error: projectError,
   } = await serverSupabase
     .from('projects')
-    .select('id, user_id, title, original_language, source_file_path, source_file_name')
+    .select('id, user_id, title, source_file_path, source_file_name, status')
     .eq('id', projectId)
     .maybeSingle()
+
+  console.log('[projects/process] fetched project', { projectId, projectExists: Boolean(project), projectError })
 
   if (projectError) {
     console.error('Failed to fetch project via RLS client:', projectError)
@@ -72,6 +80,12 @@ export async function POST(req, { params }) {
     .eq('project_id', project.id)
     .limit(1)
 
+  console.log('[projects/process] existing segments check', {
+    projectId,
+    existingCount: Array.isArray(existingSegments) ? existingSegments.length : null,
+    existingSegmentsError,
+  })
+
   if (existingSegmentsError) {
     console.error('Failed to check existing project segments:', existingSegmentsError)
     return NextResponse.json({ error: 'Unable to verify project state.' }, { status: 500 })
@@ -95,6 +109,12 @@ export async function POST(req, { params }) {
     .download(project.source_file_path)
 
   if (downloadError) {
+    console.error('[projects/process] storage download failed', { projectId, error: downloadError.message })
+  } else {
+    console.log('[projects/process] storage download success', { projectId })
+  }
+
+  if (downloadError) {
     await supabase.from('projects').update({ status: 'error' }).eq('id', projectId)
     return NextResponse.json({ error: downloadError.message }, { status: 500 })
   }
@@ -104,6 +124,7 @@ export async function POST(req, { params }) {
   try {
     const rawText = await fileBlob.text()
     segments = parseSrt(rawText)
+    console.log('[projects/process] parsed SRT', { projectId, segmentCount: segments.length })
   } catch (error) {
     await supabase.from('projects').update({ status: 'error' }).eq('id', projectId)
     return NextResponse.json({ error: error.message || 'Failed to parse SRT file' }, { status: 400 })
@@ -113,13 +134,18 @@ export async function POST(req, { params }) {
   let suggestions = new Map()
   if (process.env.OPENAI_API_KEY) {
     try {
-      suggestions = await generateCaptionSuggestions({
+      suggestions = await generateRewriteSuggestions({
         segments,
         projectTitle: project.title || project.source_file_name,
-        language: project.original_language,
+        language: project.original_language || null,
+      })
+      console.log('[projects/process] AI suggestions generated', {
+        projectId,
+        suggestionsCount: suggestions.size,
       })
     } catch (error) {
       console.error('AI suggestion pipeline failed:', error)
+      suggestions = new Map()
     }
   } else {
     console.warn('OPENAI_API_KEY is not configured. Skipping AI suggestions.')
@@ -143,9 +169,21 @@ export async function POST(req, { params }) {
     }
   })
 
+  console.log('[projects/process] inserting segments', {
+    projectId: project.id,
+    totalSegments: segmentRows.length,
+    suggestionsApplied: Array.from(suggestions.keys()),
+  })
+
   const { error: insertSegmentsError } = await supabase
     .from('review_segments')
     .insert(segmentRows)
+
+  if (insertSegmentsError) {
+    console.error('[projects/process] insert segments failed', { projectId, error: insertSegmentsError.message })
+  } else {
+    console.log('[projects/process] insert segments success', { projectId })
+  }
 
   if (insertSegmentsError) {
     await supabase.from('projects').update({ status: 'error' }).eq('id', projectId)
@@ -163,6 +201,11 @@ export async function POST(req, { params }) {
     // The user can still access the segments, but the status is wrong.
     console.error('Failed to update project status after processing:', updateError)
   }
+
+  console.log('[projects/process] completed', {
+    projectId: project.id,
+    statusUpdateError: Boolean(updateError),
+  })
 
   return NextResponse.json({ message: 'Project processed successfully.' })
 }

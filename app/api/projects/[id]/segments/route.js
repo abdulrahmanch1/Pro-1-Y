@@ -1,9 +1,11 @@
 import { NextResponse } from 'next/server'
 
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { createSupabaseServiceClient } from '@/lib/supabase/service'
 import { mapSegmentRow } from '@/lib/api/project-transforms'
 import { getOfflineProject, updateOfflineSegments } from '@/lib/offline-store'
 import { ensureOfflineUser, persistOfflineUserCookie, readOfflineUser } from '@/lib/offline-user'
+import { isUuid } from '@/lib/utils/uuid'
 
 export async function PATCH(req, { params }) {
   let supabase
@@ -60,11 +62,13 @@ export async function PATCH(req, { params }) {
     return persistOfflineUserCookie(response, targetUser)
   }
 
-  if (!supabase || !user) {
+  if (!supabase || !user || !isUuid(projectId)) {
     const offlineUserContext = ensureOfflineUser()
     const response = NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     return persistOfflineUserCookie(response, offlineUserContext)
   }
+
+  const dataClient = process.env.SUPABASE_SERVICE_ROLE_KEY ? createSupabaseServiceClient() : supabase
 
   const rowsToUpdate = normalizedUpdates
     .map((row) => {
@@ -85,7 +89,7 @@ export async function PATCH(req, { params }) {
 
   const updateIds = rowsToUpdate.map((row) => row.id)
 
-  const { data: existingRows = [], error: existingError } = await supabase
+  const { data: existingRows = [], error: existingError } = await dataClient
     .from('review_segments')
     .select('id')
     .eq('project_id', projectId)
@@ -104,7 +108,7 @@ export async function PATCH(req, { params }) {
     return NextResponse.json({ error: 'No matching segments found for update' }, { status: 404 })
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await dataClient
     .from('review_segments')
     .upsert(filteredRows, { onConflict: 'id' })
     .select('id, index, ts_start_ms, ts_end_ms, original_text, proposed_text, accepted, edited_text')

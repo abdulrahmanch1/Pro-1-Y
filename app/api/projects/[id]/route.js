@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { mapProjectRow } from '@/lib/api/project-transforms'
 import { getOfflineProject } from '@/lib/offline-store'
 import { readOfflineUser } from '@/lib/offline-user'
+import { isUuid } from '@/lib/utils/uuid'
 
 export async function GET(req, { params }) {
   let supabase
@@ -21,7 +22,7 @@ export async function GET(req, { params }) {
   }
 
   const projectId = params.id
-  if (supabase && user) {
+  if (supabase && user && isUuid(projectId)) {
     const { data: project, error } = await supabase
       .from('projects')
       .select(`
@@ -49,6 +50,8 @@ export async function GET(req, { params }) {
     if (error) {
       console.error('[api/projects/:id] failed to fetch project', error)
     } else if (project) {
+      const segmentCount = Array.isArray(project?.segments) ? project.segments.length : 0
+      console.log('[api/projects/:id] returning project', { projectId, segmentCount, status: project?.status })
       return NextResponse.json(mapProjectRow(project))
     }
   }

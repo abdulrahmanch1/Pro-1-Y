@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react'
 import { useSearchParams } from 'next/navigation'
 import { loadStripe } from '@stripe/stripe-js'
 
+import { EXPORT_COST_CENTS } from '@/lib/pricing'
+
 const formatCurrency = (cents) => `${(Number(cents || 0) / 100).toFixed(2)}`
 
 const formatDate = (value) => {
@@ -77,7 +79,11 @@ export default function WalletClient({ balanceCents, transactions }) {
         <div className="wallet-card" style={{gridColumn:'1 / -1'}}>
           <span className="tag tag--primary">Balance</span>
           <div className="wallet-balance mt-2">{formatCurrency(balance)}</div>
-          <p className="wallet-emphasis">Enough credits for {(balance / 100).toFixed(0)} AI-enhanced exports. Auto-top ups are coming soon.</p>
+          <p className="wallet-emphasis">
+            Enough balance for {EXPORT_COST_CENTS > 0 ? (balance / EXPORT_COST_CENTS).toFixed(1) : '—'} exports at ${
+              (EXPORT_COST_CENTS / 100).toFixed(2)
+            } each.
+          </p>
           <div className="wallet-quick">
             {[5, 10, 50, 100].map((value) => (
               <button

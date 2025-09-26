@@ -861,12 +861,14 @@ html[data-theme="light"] .review-toggle[data-on="false"]::after {
 .badge { display: inline-flex; align-items: center; gap: 0.45rem; padding: 0.35rem 0.9rem; border-radius: 999px; font-weight: 700; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--text-muted); border: 1px solid rgba(255, 255, 255, 0.1); }
 .badge--ok { color: var(--accent-lime); border-color: rgba(140, 251, 154, 0.45); }
 .badge--warn { color: #ffc46b; border-color: rgba(255, 196, 107, 0.45); }
+.badge--info { color: #5ad2ff; border-color: rgba(90, 210, 255, 0.45); }
 html[data-theme="light"] .badge {
   background: rgba(236, 244, 255, 0.85);
   border-color: rgba(118, 168, 240, 0.28);
   color: rgba(74, 96, 140, 0.88);
 }
 html[data-theme="light"] .badge--warn { color: #d8781f; }
+html[data-theme="light"] .badge--info { color: #1085c9; }
 
 .alert {
   display: flex;

@@ -3,6 +3,8 @@
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
+import { EXPORT_COST_CENTS } from '@/lib/pricing'
+
 export default function UploadClient() {
   const router = useRouter()
   const fileInputRef = useRef(null)
@@ -62,8 +64,19 @@ export default function UploadClient() {
 
     // 2. Trigger the background processing job only when required.
     if (!processed) {
-      fetch(`/api/projects/${projectId}/process`, { method: 'POST' })
-        .catch(err => console.error('Failed to trigger processing job:', err))
+      try {
+        const processResponse = await fetch(`/api/projects/${projectId}/process`, {
+          method: 'POST',
+          credentials: 'include',
+        })
+
+        if (!processResponse.ok) {
+          const payload = await processResponse.json().catch(() => ({}))
+          console.error('Processing job failed to start:', processResponse.status, payload?.error)
+        }
+      } catch (err) {
+        console.error('Failed to trigger processing job:', err)
+      }
     }
 
     // 3. Redirect the user immediately to the review page.
@@ -135,7 +148,7 @@ export default function UploadClient() {
             </div>
             <div>
               <h3>Exports</h3>
-              <p className="mt-2">One credit per download. Your wallet ledger stays in sync automatically.</p>
+              <p className="mt-2">Each export costs ${(EXPORT_COST_CENTS / 100).toFixed(2)}. Your wallet ledger stays in sync automatically.</p>
             </div>
           </div>
         </div>

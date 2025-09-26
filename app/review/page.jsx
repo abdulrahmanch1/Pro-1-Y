@@ -4,10 +4,12 @@ import { redirect } from 'next/navigation'
 
 import ReviewClient from './ReviewClient'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { createSupabaseServiceClient } from '@/lib/supabase/service'
 import { mapProjectRow } from '@/lib/api/project-transforms'
 import MissingSupabaseNotice from '@/components/MissingSupabaseNotice'
 import { getOfflineProject, listOfflineProjects } from '@/lib/offline-store'
 import { readOfflineUser } from '@/lib/offline-user'
+import { isUuid } from '@/lib/utils/uuid'
 
 export const metadata = { title: 'Review — Subtitle AI' }
 
@@ -49,37 +51,41 @@ export default async function ReviewPage({ searchParams }) {
   }
 
   const projectId = searchParams?.projectId
-  let projectQuery = supabase
-    .from('projects')
-    .select(`
-      id,
-      title,
-      status,
-      created_at,
-      source_file_name,
-      segments:review_segments(
-        id,
-        index,
-        ts_start_ms,
-        ts_end_ms,
-        original_text,
-        proposed_text,
-        accepted,
-        edited_text
-      )
-    `)
-    .eq('user_id', user.id)
-
-  if (projectId) {
-    projectQuery = projectQuery.eq('id', projectId)
-  } else {
-    projectQuery = projectQuery.order('created_at', { ascending: false }).limit(1)
-  }
+  const projectIdIsUuid = typeof projectId === 'string' ? isUuid(projectId) : false
 
   let projects
   let error
 
-  if (supabase && user) {
+  const dataClient = process.env.SUPABASE_SERVICE_ROLE_KEY ? createSupabaseServiceClient() : supabase
+
+  if (dataClient && user && (!projectId || projectIdIsUuid)) {
+    let projectQuery = dataClient
+      .from('projects')
+      .select(`
+        id,
+        title,
+        status,
+        created_at,
+        source_file_name,
+        segments:review_segments(
+          id,
+          index,
+          ts_start_ms,
+          ts_end_ms,
+          original_text,
+          proposed_text,
+          accepted,
+          edited_text
+        )
+      `)
+      .eq('user_id', user.id)
+
+    if (projectId) {
+      projectQuery = projectQuery.eq('id', projectId)
+    } else {
+      projectQuery = projectQuery.order('created_at', { ascending: false }).limit(1)
+    }
+
     try {
       const response = await projectQuery
       projects = response.data

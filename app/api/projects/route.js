@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server'
 import { randomUUID } from 'crypto'
 
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { createSupabaseServiceClient } from '@/lib/supabase/service'
 import { parseSrt } from '@/lib/parsers/srt'
-import { generateCaptionSuggestions } from '@/lib/ai/chatgpt'
+import { generateRewriteSuggestions } from '@/lib/ai/rewrite'
 import { ensureOfflineUser, persistOfflineUserCookie } from '@/lib/offline-user'
 import { createOfflineProject } from '@/lib/offline-store'
 
@@ -57,7 +58,7 @@ export async function POST(req) {
     let suggestions = new Map()
     if (process.env.OPENAI_API_KEY) {
       try {
-        suggestions = await generateCaptionSuggestions({
+        suggestions = await generateRewriteSuggestions({
           segments: baseSegments,
           projectTitle,
           language: null,
@@ -152,8 +153,12 @@ export async function POST(req) {
     return offlineResponse()
   }
 
+  const hasServiceRole = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
+
   // 1. Upload the file to storage
-  const { error: uploadError } = await supabase.storage
+  const storageClient = hasServiceRole ? createSupabaseServiceClient() : supabase
+
+  const { error: uploadError } = await storageClient.storage
     .from(bucket)
     .upload(objectPath, rawBuffer, {
       cacheControl: '3600',
@@ -186,7 +191,7 @@ export async function POST(req) {
     .single()
 
   if (insertProjectError) {
-    await supabase.storage.from(bucket).remove([objectPath])
+    await storageClient.storage.from(bucket).remove([objectPath])
 
     return fallbackToOffline({
       userId: user.id,
@@ -195,8 +200,6 @@ export async function POST(req) {
       message: insertProjectError.message,
     })
   }
-
-  const hasServiceRole = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
 
   if (!hasServiceRole) {
     try {

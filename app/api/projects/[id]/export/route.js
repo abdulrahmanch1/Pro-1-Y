@@ -4,6 +4,8 @@ import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { serializeSegmentsToSrt } from '@/lib/parsers/srt'
 import { getOfflineProject } from '@/lib/offline-store'
 import { readOfflineUser, ensureOfflineUser, persistOfflineUserCookie } from '@/lib/offline-user'
+import { isUuid } from '@/lib/utils/uuid'
+import { EXPORT_COST_CENTS } from '@/lib/pricing'
 
 const computeBalance = (transactions = []) =>
   transactions
@@ -70,7 +72,7 @@ export async function POST(req, { params }) {
     return response
   }
 
-  if (!supabase || !user) {
+  if (!supabase || !user || !isUuid(projectId)) {
     const ensured = ensureOfflineUser()
     const response = NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
     return persistOfflineUserCookie(response, ensured)
@@ -113,7 +115,7 @@ export async function POST(req, { params }) {
     return NextResponse.json({ error: 'No segments to export' }, { status: 400 })
   }
 
-  const exportCost = 100
+  const exportCost = EXPORT_COST_CENTS
 
   const { data: walletTransactions = [], error: walletError } = await supabase
     .from('wallet_transactions')

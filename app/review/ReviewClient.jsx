@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useState, useEffect } from 'react'
+import { useCallback, useMemo, useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { useDebounce } from '@/hooks/useDebounce'
 import { diffWords } from '@/lib/diff/words'
@@ -15,6 +15,19 @@ const formatTime = (ms) => {
 }
 
 const buildRange = (segment) => `${formatTime(segment.tsStartMs)} --> ${formatTime(segment.tsEndMs)}`
+
+const normalizeText = (value) => (value ?? '').replace(/\s+/g, ' ').trim()
+
+const segmentHasChanges = (segment) => {
+  const original = normalizeText(segment.originalText)
+  const proposed = normalizeText(segment.proposedText)
+  const edited = normalizeText(segment.editedText)
+
+  return (
+    (segment.proposedText != null && proposed !== original) ||
+    (segment.editedText != null && edited !== original)
+  )
+}
 
 const ProcessingState = () => {
   const router = useRouter();
@@ -71,13 +84,14 @@ const DiffPreview = ({ tokens }) => {
 const ReviewSegmentRow = ({ segment, onToggleAccept, onTextEdit }) => {
   const currentText = segment.editedText || segment.proposedText || segment.originalText
   const tokens = useMemo(() => diffWords(segment.originalText || '', currentText || ''), [segment.originalText, currentText])
+  const aiSuggested = (segment.proposedText || '').trim() && (segment.proposedText || '').trim() !== (segment.originalText || '').trim()
 
   return (
     <article className="review-row">
       <div className="stack">
         <div className="flex" style={{alignItems:'center'}}>
-          <span className={`badge ${segment.accepted ? 'badge--ok' : 'badge--warn'}`}>
-            {segment.accepted ? 'Proposed' : 'Original'}
+          <span className={`badge ${aiSuggested ? 'badge--info' : segment.accepted ? 'badge--ok' : 'badge--warn'}`}>
+            {aiSuggested ? 'AI rewrite' : segment.accepted ? 'Proposed' : 'Original'}
           </span>
           <code style={{color:'var(--text-subtle)'}}>{buildRange(segment)}</code>
         </div>
@@ -117,12 +131,86 @@ export default function ReviewClient({ project }) {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
   const [exporting, setExporting] = useState(false)
+  const [showOnlyChanged, setShowOnlyChanged] = useState(() => (project.segments || []).some(segmentHasChanges))
+  const [userToggledFilter, setUserToggledFilter] = useState(false)
+  const [status, setStatus] = useState(project.status)
+  const lastProjectIdRef = useRef(project.id)
 
   // State for debouncing text edits
   const [editText, setEditText] = useState(null)
   const debouncedEditText = useDebounce(editText, 750)
 
   const projectTitle = project.title || project.sourceFileName || 'Untitled project'
+
+  useEffect(() => {
+    if (lastProjectIdRef.current !== project.id) {
+      lastProjectIdRef.current = project.id
+      setSegments(project.segments)
+      setStatus(project.status)
+      setUserToggledFilter(false)
+      setShowOnlyChanged((project.segments || []).some(segmentHasChanges))
+      return
+    }
+
+    const incoming = project.segments || []
+    if (!incoming.length) {
+      setStatus(project.status)
+      return
+    }
+
+    setSegments((prev) => (prev.length ? prev : incoming))
+    setStatus(project.status)
+
+    if (!userToggledFilter && incoming.some(segmentHasChanges)) {
+      setShowOnlyChanged(true)
+    }
+  }, [project.id, project.segments, project.status, userToggledFilter])
+
+  useEffect(() => {
+    if (!project.id || project.offline) return
+    if (segments.length) return
+
+    let cancelled = false
+    let timeoutId
+
+    const poll = async () => {
+      try {
+        const response = await fetch(`/api/projects/${project.id}`, { cache: 'no-store' })
+        if (!response.ok) throw new Error('Failed to load project')
+        const payload = await response.json()
+        if (cancelled) return
+
+        if (Array.isArray(payload.segments) && payload.segments.length) {
+          setSegments(payload.segments)
+          setStatus(payload.status || 'review')
+          if (!userToggledFilter) {
+            const hasChanges = payload.segments.some(segmentHasChanges)
+            setShowOnlyChanged(hasChanges)
+          }
+          return
+        }
+
+        if (payload.status && payload.status !== status) {
+          setStatus(payload.status)
+        }
+      } catch (err) {
+        if (process.env.NODE_ENV === 'development') {
+          console.warn('[review] polling failed', err?.message)
+        }
+      }
+
+      if (!cancelled) {
+        timeoutId = setTimeout(poll, 3000)
+      }
+    }
+
+    poll()
+
+    return () => {
+      cancelled = true
+      if (timeoutId) clearTimeout(timeoutId)
+    }
+  }, [project.id, project.offline, segments.length, status, userToggledFilter])
 
   const persistUpdates = useCallback(async (updates) => {
     if (!updates.length) return
@@ -175,12 +263,18 @@ export default function ReviewClient({ project }) {
   }, [])
 
   const acceptAll = useCallback((value) => {
-    setSegments((prev) => {
-      const updates = prev.map((segment) => ({ id: segment.id, accepted: value }))
-      persistUpdates(updates)
-      return prev.map((segment) => ({ ...segment, accepted: value }))
-    })
-  }, [persistUpdates])
+    const targetSegments = (showOnlyChanged ? segments.filter(segmentHasChanges) : segments)
+    if (!targetSegments.length) return
+
+    const updates = targetSegments.map(({ id }) => ({ id, accepted: value }))
+    const targetIds = new Set(targetSegments.map(({ id }) => id))
+
+    setSegments((prev) => prev.map((segment) => (
+      targetIds.has(segment.id) ? { ...segment, accepted: value } : segment
+    )))
+
+    persistUpdates(updates)
+  }, [persistUpdates, segments, showOnlyChanged])
 
   const download = useCallback(async () => {
     setExporting(true)
@@ -206,10 +300,18 @@ export default function ReviewClient({ project }) {
     }
   }, [project.id])
 
-  const acceptedCount = useMemo(() => segments.filter((segment) => segment.accepted).length, [segments])
+  const changedSegments = useMemo(() => segments.filter(segmentHasChanges), [segments])
+  const visibleSegments = useMemo(
+    () => (showOnlyChanged ? changedSegments : segments),
+    [changedSegments, segments, showOnlyChanged],
+  )
+  const aiFixCount = useMemo(() => changedSegments.length, [changedSegments])
 
-  const isProcessing = project.status === 'processing';
-  const isError = project.status === 'error';
+  const acceptedCount = useMemo(() => visibleSegments.filter((segment) => segment.accepted).length, [visibleSegments])
+
+  const hasSegments = segments.length > 0
+  const isProcessing = status === 'processing' && !hasSegments;
+  const isError = status === 'error';
 
   return (
     <section className="section">
@@ -230,7 +332,18 @@ export default function ReviewClient({ project }) {
               <span>Download</span>
             </div>
             <div className="flex" style={{alignItems:'center', gap: '0.8rem'}}>
-              <span className="tag">{acceptedCount}/{segments.length} accepted</span>
+              <span className="tag">{acceptedCount}/{visibleSegments.length || 0} accepted</span>
+              <span className="tag tag--info">AI fixes: {aiFixCount}</span>
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={() => {
+                  setUserToggledFilter(true)
+                  setShowOnlyChanged((prev) => !prev)
+                }}
+              >
+                {showOnlyChanged ? 'Show all segments' : 'Show edited segments only'}
+              </button>
               <button className="btn btn-outline" type="button" onClick={() => acceptAll(true)}>Accept all</button>
               <button className="btn btn-ghost" type="button" onClick={() => acceptAll(false)}>Reject all</button>
               <button className="btn btn-primary" type="button" onClick={download} disabled={exporting}>
@@ -251,14 +364,25 @@ export default function ReviewClient({ project }) {
           ) : null}
 
           <div className="review-list">
-            {segments.map((segment) => (
-              <ReviewSegmentRow
-                key={segment.id}
-                segment={segment}
-                onToggleAccept={setAccept}
-                onTextEdit={handleTextEdit}
-              />
-            ))}
+            {visibleSegments.length ? (
+              visibleSegments.map((segment) => (
+                <ReviewSegmentRow
+                  key={segment.id}
+                  segment={segment}
+                  onToggleAccept={setAccept}
+                  onTextEdit={handleTextEdit}
+                />
+              ))
+            ) : (
+              <div className="card" style={{marginTop:'2rem'}}>
+                <h3>No edits to review.</h3>
+                {showOnlyChanged ? (
+                  <p>All segments match the original transcript. Switch to showing all segments if you need to inspect everything.</p>
+                ) : (
+                  <p>Your transcript is empty.</p>
+                )}
+              </div>
+            )}
           </div>
         </>
       )}
