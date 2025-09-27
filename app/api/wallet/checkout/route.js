@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { stripe } from '@/lib/stripe';
+import { getStripeClient } from '@/lib/stripe';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
 export async function POST(req) {
@@ -17,6 +17,11 @@ export async function POST(req) {
 
   if (authError || !user) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+
+  const stripe = getStripeClient();
+  if (!stripe) {
+    return NextResponse.json({ error: 'Stripe credentials are not configured.' }, { status: 500 });
   }
 
   const body = await req.json().catch(() => ({}));

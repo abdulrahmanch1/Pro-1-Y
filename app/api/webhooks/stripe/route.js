@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { headers } from 'next/headers';
-import { stripe } from '@/lib/stripe';
+import { getStripeClient } from '@/lib/stripe';
 import { createSupabaseServiceClient } from '@/lib/supabase/service';
 
 export const runtime = 'nodejs';
@@ -65,6 +65,11 @@ async function handleCheckoutSessionCompleted(session) {
 export async function POST(req) {
   if (!webhookSecret) {
     return NextResponse.json({ error: 'Stripe webhook secret is not configured.' }, { status: 500 });
+  }
+
+  const stripe = getStripeClient();
+  if (!stripe) {
+    return NextResponse.json({ error: 'Stripe credentials are not configured.' }, { status: 500 });
   }
 
   const body = await req.text();

@@ -77,7 +77,9 @@ export async function POST(req) {
     return baseSegments.map((segment, position) => {
       const index = Number.isFinite(segment.index) && segment.index > 0 ? segment.index : position + 1
       const aiPayload = suggestions.get(index)
-      const proposedText = (aiPayload?.suggestion || segment.originalText).trim()
+      const rewrite = typeof aiPayload?.rewrite === 'string' ? aiPayload.rewrite.trim() : ''
+      const original = typeof segment.originalText === 'string' ? segment.originalText : ''
+      const proposedText = rewrite || original
 
       return {
         project_id: projectId,
@@ -98,7 +100,9 @@ export async function POST(req) {
     const offlineSegments = baseSegments.map((segment, position) => {
       const index = Number.isFinite(segment.index) && segment.index > 0 ? segment.index : position + 1
       const aiPayload = suggestions.get(index)
-      const proposedText = (aiPayload?.suggestion || segment.originalText).trim()
+      const rewrite = typeof aiPayload?.rewrite === 'string' ? aiPayload.rewrite.trim() : ''
+      const original = typeof segment.originalText === 'string' ? segment.originalText : ''
+      const proposedText = rewrite || original
 
       return {
         id: `offline-${randomUUID()}`,
