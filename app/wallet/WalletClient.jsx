@@ -17,14 +17,23 @@ const formatDate = (value) => {
 // Lazily load the Stripe instance
 const stripePromise = loadStripe(process.env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY || '');
 
-export default function WalletClient({ balanceCents, transactions }) {
+export default function WalletClient({ balanceCents, availableCents, pendingDebitsCents = 0, transactions }) {
   const [balance, setBalance] = useState(balanceCents)
+  const [available, setAvailable] = useState(availableCents ?? balanceCents)
+  const [pendingDebits, setPendingDebits] = useState(pendingDebitsCents)
   const [items, setItems] = useState(transactions)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [successMessage, setSuccessMessage] = useState('')
 
   const searchParams = useSearchParams();
+
+  useEffect(() => {
+    setBalance(balanceCents)
+    setAvailable(availableCents ?? balanceCents)
+    setPendingDebits(pendingDebitsCents)
+    setItems(transactions)
+  }, [balanceCents, availableCents, pendingDebitsCents, transactions])
 
   useEffect(() => {
     if (searchParams.get('payment_success')) {
@@ -78,12 +87,15 @@ export default function WalletClient({ balanceCents, transactions }) {
       <div className="wallet-grid" style={{marginTop:'2rem'}}>
         <div className="wallet-card" style={{gridColumn:'1 / -1'}}>
           <span className="tag tag--primary">Balance</span>
-          <div className="wallet-balance mt-2">{formatCurrency(balance)}</div>
+          <div className="wallet-balance mt-2">{formatCurrency(available)}</div>
           <p className="wallet-emphasis">
-            Enough balance for {EXPORT_COST_CENTS > 0 ? (balance / EXPORT_COST_CENTS).toFixed(1) : '—'} exports at ${
+            Enough balance for {EXPORT_COST_CENTS > 0 ? (available / EXPORT_COST_CENTS).toFixed(1) : '—'} exports at ${
               (EXPORT_COST_CENTS / 100).toFixed(2)
             } each.
           </p>
+          {pendingDebits > 0 ? (
+            <p className="upload-hint">{`Pending holds: -${formatCurrency(pendingDebits)}, ledger total: ${formatCurrency(balance)}`}</p>
+          ) : null}
           <div className="wallet-quick">
             {[5, 10, 50, 100].map((value) => (
               <button

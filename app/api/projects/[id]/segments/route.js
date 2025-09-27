@@ -68,6 +68,24 @@ export async function PATCH(req, { params }) {
     return persistOfflineUserCookie(response, offlineUserContext)
   }
 
+  const {
+    data: ownedProject,
+    error: ownershipError,
+  } = await supabase
+    .from('projects')
+    .select('id')
+    .eq('id', projectId)
+    .eq('user_id', user.id)
+    .maybeSingle()
+
+  if (ownershipError) {
+    return NextResponse.json({ error: ownershipError.message }, { status: 500 })
+  }
+
+  if (!ownedProject) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
   const serviceClient = process.env.SUPABASE_SERVICE_ROLE_KEY ? createSupabaseServiceClient() : null
   const dataClient = serviceClient || supabase
 
@@ -92,7 +110,7 @@ export async function PATCH(req, { params }) {
 
   const { data: existingRows = [], error: existingError } = await dataClient
     .from('review_segments')
-    .select('id')
+    .select('id, index')
     .eq('project_id', projectId)
     .in('id', updateIds)
 
@@ -100,25 +118,35 @@ export async function PATCH(req, { params }) {
     return NextResponse.json({ error: existingError.message }, { status: 500 })
   }
 
-  const existingIds = new Set(existingRows.map((row) => row.id))
+  const existingMap = new Map(existingRows.map((row) => [row.id, row.index]))
   const filteredRows = rowsToUpdate
-    .filter((row) => existingIds.has(row.id))
-    .map((row) => ({ ...row, project_id: projectId }))
+    .filter((row) => existingMap.has(row.id))
+    .map((row) => ({ ...row, project_id: projectId, index: existingMap.get(row.id) }))
 
   if (!filteredRows.length) {
     return NextResponse.json({ error: 'No matching segments found for update' }, { status: 404 })
   }
 
-  const { data, error } = await dataClient
-    .from('review_segments')
-    .upsert(filteredRows, { onConflict: 'id' })
-    .select('id, index, ts_start_ms, ts_end_ms, original_text, proposed_text, accepted, edited_text')
+  const results = []
 
-  if (error) {
-    return NextResponse.json({ error: error.message }, { status: 500 })
+  for (const row of filteredRows) {
+    const { id, project_id, index, ...update } = row
+    const { data, error } = await dataClient
+      .from('review_segments')
+      .update(update)
+      .eq('id', id)
+      .eq('project_id', projectId)
+      .select('id, index, ts_start_ms, ts_end_ms, original_text, proposed_text, accepted, edited_text')
+      .maybeSingle()
+
+    if (error) {
+      return NextResponse.json({ error: error.message }, { status: 500 })
+    }
+
+    if (data) {
+      results.push(mapSegmentRow(data))
+    }
   }
 
-  const applied = Array.isArray(data) ? data.map(mapSegmentRow) : []
-
-  return NextResponse.json({ segments: applied })
+  return NextResponse.json({ segments: results })
 }

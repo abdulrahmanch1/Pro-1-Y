@@ -7,6 +7,8 @@ import { parseSrt } from '@/lib/parsers/srt'
 import { generateRewriteSuggestions } from '@/lib/ai/rewrite'
 import { ensureOfflineUser, persistOfflineUserCookie } from '@/lib/offline-user'
 import { createOfflineProject } from '@/lib/offline-store'
+import { UPLOAD_COST_CENTS } from '@/lib/pricing'
+import { computeBalance, computePendingDebits } from '@/lib/utils/wallet'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -157,6 +159,112 @@ export async function POST(req) {
     return offlineResponse()
   }
 
+  const uploadCostCents = UPLOAD_COST_CENTS
+  let chargeId = null
+
+  const revertCharge = async () => {
+    if (!chargeId || !supabase) return
+    try {
+      await supabase
+        .from('wallet_transactions')
+        .delete()
+        .eq('id', chargeId)
+    } catch (error) {
+      console.error('[api/projects] failed to revert upload charge', error)
+    } finally {
+      chargeId = null
+    }
+  }
+
+  const finalizeCharge = async ({ projectId } = {}) => {
+    if (!chargeId || !supabase) return
+    try {
+      const update = {
+        status: 'succeeded',
+        metadata: {
+          action: 'upload',
+          project_id: projectId || null,
+        },
+      }
+
+      await supabase
+        .from('wallet_transactions')
+        .update(update)
+        .eq('id', chargeId)
+    } catch (error) {
+      console.error('[api/projects] failed to finalize upload charge', error)
+    } finally {
+      chargeId = null
+    }
+  }
+
+  const ensureSufficientAfterPending = async () => {
+    if (!supabase || !user) {
+      return { ok: false, error: new Error('Unauthorized') }
+    }
+
+    const { data: txs = [], error } = await supabase
+      .from('wallet_transactions')
+      .select('id, amount_cents, status')
+      .eq('user_id', user.id)
+
+    if (error) {
+      return { ok: false, error }
+    }
+
+    const succeededBalance = computeBalance(txs)
+    const pendingDebitTotal = computePendingDebits(txs)
+    const available = succeededBalance - pendingDebitTotal
+
+    if (available < 0) {
+      return { ok: false, error: new Error('Insufficient credits. Top up your wallet to upload.') }
+    }
+
+    return { ok: true }
+  }
+
+  const { data: walletTransactions = [], error: walletError } = await supabase
+    .from('wallet_transactions')
+    .select('id, amount_cents, status')
+    .eq('user_id', user.id)
+
+  if (walletError) {
+    return NextResponse.json({ error: walletError.message }, { status: 500 })
+  }
+
+  const balanceCents = computeBalance(walletTransactions)
+  if (balanceCents < uploadCostCents) {
+    return NextResponse.json({ error: 'Insufficient credits. Top up your wallet to upload.' }, { status: 402 })
+  }
+
+  const { data: pendingCharge, error: pendingError } = await supabase
+    .from('wallet_transactions')
+    .insert({
+      user_id: user.id,
+      type: 'charge',
+      amount_cents: -uploadCostCents,
+      description: `Upload ${file.name}`,
+      status: 'pending',
+    })
+    .select('id')
+    .single()
+
+  if (pendingError) {
+    return NextResponse.json({ error: pendingError.message }, { status: 500 })
+  }
+
+  chargeId = pendingCharge.id
+
+  const availability = await ensureSufficientAfterPending()
+  if (!availability.ok) {
+    await revertCharge()
+    const isInsufficient = availability.error?.message?.includes('Insufficient credits')
+    return NextResponse.json(
+      { error: availability.error?.message || 'Unable to verify wallet balance.' },
+      { status: isInsufficient ? 402 : 500 },
+    )
+  }
+
   const hasServiceRole = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
   let storageClient = hasServiceRole ? createSupabaseServiceClient() : supabase
   if (hasServiceRole && !storageClient) {
@@ -174,6 +282,7 @@ export async function POST(req) {
 
   if (uploadError) {
     console.error('[api/projects] storage upload failed', uploadError)
+    await revertCharge()
     return fallbackToOffline({
       userId: user.id,
       overrideId: `offline-${randomUUID()}`,
@@ -197,6 +306,7 @@ export async function POST(req) {
     .single()
 
   if (insertProjectError) {
+    await revertCharge()
     await storageClient.storage.from(bucket).remove([objectPath])
 
     return fallbackToOffline({
@@ -228,12 +338,14 @@ export async function POST(req) {
         throw updateProjectError
       }
 
+      await finalizeCharge({ projectId: project.id })
       return NextResponse.json({ projectId: project.id, processed: true }, { status: 201 })
     } catch (error) {
       console.error('[api/projects] inline processing failed', error)
       await supabase.from('projects').delete().eq('id', project.id)
       await supabase.storage.from(bucket).remove([objectPath])
 
+      await revertCharge()
       return fallbackToOffline({
         userId: user.id,
         overrideId: project.id,
@@ -244,5 +356,6 @@ export async function POST(req) {
   }
 
   // 3. Return the project ID so the client can trigger the processing job
+  await finalizeCharge({ projectId: project.id })
   return NextResponse.json({ projectId: project.id, processed: false }, { status: 201 })
 }

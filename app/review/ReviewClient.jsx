@@ -104,12 +104,14 @@ const ReviewSegmentRow = ({ segment, onToggleAccept, onTextEdit }) => {
               })
             : segment.originalText}
         </pre>
-        <pre
-          className="review-line"
+        <div
+          className="review-line review-line--editable"
           contentEditable
           suppressContentEditableWarning
+          role="textbox"
+          spellCheck="true"
           onInput={(event) => onTextEdit(segment.id, event.currentTarget.textContent || '')}
-        >{currentText}</pre>
+        >{currentText}</div>
         <DiffPreview tokens={tokens} />
       </div>
       <div className="flex" style={{alignItems:'center'}}>
@@ -127,7 +129,7 @@ const ReviewSegmentRow = ({ segment, onToggleAccept, onTextEdit }) => {
 }
 
 export default function ReviewClient({ project }) {
-  const [segments, setSegments] = useState(project.segments)
+  const [segments, setSegments] = useState(() => project.segments || [])
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState(null)
   const [exporting, setExporting] = useState(false)
@@ -135,6 +137,7 @@ export default function ReviewClient({ project }) {
   const [userToggledFilter, setUserToggledFilter] = useState(false)
   const [status, setStatus] = useState(project.status)
   const lastProjectIdRef = useRef(project.id)
+  const segmentsRef = useRef(project.segments || [])
 
   // State for debouncing text edits
   const [editText, setEditText] = useState(null)
@@ -143,9 +146,15 @@ export default function ReviewClient({ project }) {
   const projectTitle = project.title || project.sourceFileName || 'Untitled project'
 
   useEffect(() => {
+    segmentsRef.current = segments
+  }, [segments])
+
+  useEffect(() => {
     if (lastProjectIdRef.current !== project.id) {
       lastProjectIdRef.current = project.id
-      setSegments(project.segments)
+      const nextSegments = project.segments || []
+      segmentsRef.current = nextSegments
+      setSegments(nextSegments)
       setStatus(project.status)
       setUserToggledFilter(false)
       setShowOnlyChanged((project.segments || []).some(segmentHasChanges))
@@ -212,7 +221,7 @@ export default function ReviewClient({ project }) {
     }
   }, [project.id, project.offline, segments.length, status, userToggledFilter])
 
-  const persistUpdates = useCallback(async (updates) => {
+  const persistUpdates = useCallback(async (updates, { onError } = {}) => {
     if (!updates.length) return
     setSaving(true)
     setError(null)
@@ -238,6 +247,9 @@ export default function ReviewClient({ project }) {
       }
     } catch (err) {
       setError(err.message || 'Failed to save changes.')
+      if (typeof onError === 'function') {
+        onError()
+      }
     } finally {
       setSaving(false)
     }
@@ -245,36 +257,73 @@ export default function ReviewClient({ project }) {
 
   // Effect to save debounced text changes
   useEffect(() => {
-    if (debouncedEditText) {
-      persistUpdates([{ id: debouncedEditText.id, editedText: debouncedEditText.text }])
-    }
+    if (!debouncedEditText) return
+
+    const { id, text, previousText } = debouncedEditText
+    if (text === previousText) return
+
+    persistUpdates([{ id, editedText: text }], {
+      onError: () => {
+        setSegments((prev) => prev.map((segment) => (
+          segment.id === id ? { ...segment, editedText: previousText } : segment
+        )))
+      },
+    })
+
+    setEditText(null)
   }, [debouncedEditText, persistUpdates])
 
   const setAccept = useCallback((segmentId, accepted) => {
+    const originalSegment = segmentsRef.current.find((segment) => segment.id === segmentId)
     setSegments((prev) => prev.map((segment) => segment.id === segmentId ? { ...segment, accepted } : segment))
-    persistUpdates([{ id: segmentId, accepted }])
+    persistUpdates([{ id: segmentId, accepted }], {
+      onError: () => {
+        if (!originalSegment) return
+        setSegments((prev) => prev.map((segment) => (
+          segment.id === segmentId ? { ...segment, accepted: originalSegment.accepted } : segment
+        )))
+      },
+    })
   }, [persistUpdates])
 
   const handleTextEdit = useCallback((segmentId, newText) => {
+    const originalSegment = segmentsRef.current.find((segment) => segment.id === segmentId)
+
     // Update the UI state immediately for responsiveness
-    setSegments((prev) => prev.map((segment) => segment.id === segmentId ? { ...segment, editedText: newText } : segment))
-    // Set the value to be debounced and saved
-    setEditText({ id: segmentId, text: newText })
+    setSegments((prev) => prev.map((segment) => (
+      segment.id === segmentId ? { ...segment, editedText: newText } : segment
+    )))
+
+    // Set the value to be debounced and saved, including a rollback snapshot
+    setEditText({ id: segmentId, text: newText, previousText: originalSegment?.editedText })
   }, [])
 
   const acceptAll = useCallback((value) => {
-    const targetSegments = (showOnlyChanged ? segments.filter(segmentHasChanges) : segments)
+    const currentSegments = segmentsRef.current || []
+    const targetSegments = showOnlyChanged
+      ? currentSegments.filter(segmentHasChanges)
+      : currentSegments
+
     if (!targetSegments.length) return
 
     const updates = targetSegments.map(({ id }) => ({ id, accepted: value }))
     const targetIds = new Set(targetSegments.map(({ id }) => id))
+    const rollbackMap = new Map(targetSegments.map(({ id, accepted: previousAccepted }) => [id, previousAccepted]))
 
     setSegments((prev) => prev.map((segment) => (
       targetIds.has(segment.id) ? { ...segment, accepted: value } : segment
     )))
 
-    persistUpdates(updates)
-  }, [persistUpdates, segments, showOnlyChanged])
+    persistUpdates(updates, {
+      onError: () => {
+        setSegments((prev) => prev.map((segment) => (
+          rollbackMap.has(segment.id)
+            ? { ...segment, accepted: rollbackMap.get(segment.id) }
+            : segment
+        )))
+      },
+    })
+  }, [persistUpdates, showOnlyChanged])
 
   const download = useCallback(async () => {
     setExporting(true)
@@ -285,14 +334,41 @@ export default function ReviewClient({ project }) {
       })
 
       if (!response.ok) {
-        const payload = await response.json().catch(() => ({}))
-        throw new Error(payload.error || 'Export failed. Try again.')
+        let message = 'Export failed. Try again.'
+        try {
+          const payload = await response.json()
+          message = payload.error || message
+        } catch (_) {
+          const fallback = await response.text().catch(() => '')
+          message = fallback || message
+        }
+        throw new Error(message)
       }
 
-      const payload = await response.json()
-      if (payload.downloadUrl) {
-        window.location.href = payload.downloadUrl
+      const contentType = response.headers.get('content-type') || ''
+      if (contentType.includes('application/json')) {
+        const payload = await response.json()
+        if (payload.downloadUrl) {
+          window.location.href = payload.downloadUrl
+        } else {
+          throw new Error('Export failed. Try again.')
+        }
+        return
       }
+
+      const blob = await response.blob()
+      const disposition = response.headers.get('content-disposition') || ''
+      const match = disposition.match(/filename="?([^";]+)"?/i)
+      const filename = match && match[1] ? match[1] : 'captions.srt'
+
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
     } catch (err) {
       setError(err.message || 'Export failed. Try again.')
     } finally {

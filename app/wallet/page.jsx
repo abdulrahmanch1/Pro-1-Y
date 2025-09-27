@@ -4,13 +4,9 @@ import { redirect } from 'next/navigation'
 import WalletClient from './WalletClient'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import MissingSupabaseNotice from '@/components/MissingSupabaseNotice'
+import { computeBalance, computePendingDebits } from '@/lib/utils/wallet'
 
 export const metadata = { title: 'Wallet — Subtitle AI' }
-
-const balanceFromTransactions = (transactions = []) =>
-  transactions
-    .filter((tx) => tx.status === 'succeeded')
-    .reduce((acc, tx) => acc + Number(tx.amount_cents || 0), 0)
 
 export default async function WalletPage() {
   const supabase = createSupabaseServerClient()
@@ -36,11 +32,15 @@ export default async function WalletPage() {
     throw error
   }
 
-  const balanceCents = balanceFromTransactions(transactions)
+  const balanceCents = computeBalance(transactions)
+  const pendingDebitsCents = computePendingDebits(transactions)
+  const availableCents = balanceCents - pendingDebitsCents
 
   return (
     <WalletClient
       balanceCents={balanceCents}
+      availableCents={availableCents}
+      pendingDebitsCents={pendingDebitsCents}
       transactions={transactions}
     />
   )

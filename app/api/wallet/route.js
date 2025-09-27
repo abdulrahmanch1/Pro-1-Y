@@ -1,14 +1,10 @@
 import { NextResponse } from 'next/server'
 
 import { createSupabaseServerClient } from '@/lib/supabase/server'
+import { computeBalance, computePendingDebits } from '@/lib/utils/wallet'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
-
-const computeBalance = (transactions = []) =>
-  transactions
-    .filter((tx) => tx.status === 'succeeded')
-    .reduce((acc, tx) => acc + Number(tx.amount_cents || 0), 0)
 
 export async function GET() {
   const supabase = createSupabaseServerClient()
@@ -35,9 +31,15 @@ export async function GET() {
   }
 
   const balanceCents = computeBalance(transactions)
+  const pendingDebitsCents = computePendingDebits(transactions)
+  const availableCents = balanceCents - pendingDebitsCents
   return NextResponse.json({
     balanceCents,
     balance: balanceCents / 100,
+    pendingDebitsCents,
+    pendingDebits: pendingDebitsCents / 100,
+    availableCents,
+    available: availableCents / 100,
     transactions,
   })
 }

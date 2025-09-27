@@ -1,26 +1,20 @@
 import { NextResponse } from 'next/server'
 
+import { cookies } from 'next/headers'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 import { serializeSegmentsToSrt } from '@/lib/parsers/srt'
 import { getOfflineProject } from '@/lib/offline-store'
 import { readOfflineUser, ensureOfflineUser, persistOfflineUserCookie } from '@/lib/offline-user'
 import { isUuid } from '@/lib/utils/uuid'
 import { EXPORT_COST_CENTS } from '@/lib/pricing'
-
-const computeBalance = (transactions = []) =>
-  transactions
-    .filter((tx) => tx.status === 'succeeded')
-    .reduce((acc, tx) => acc + Number(tx.amount_cents || 0), 0)
-
-const computePendingDebits = (transactions = []) =>
-  transactions
-    .filter((tx) => tx.status === 'pending' && Number(tx.amount_cents || 0) < 0)
-    .reduce((acc, tx) => acc + Math.abs(Number(tx.amount_cents || 0)), 0)
+import { computeBalance, computePendingDebits } from '@/lib/utils/wallet'
+import { createSupabaseServiceClient } from '@/lib/supabase/service'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 export async function POST(req, { params }) {
+  const cookieStore = cookies()
   const supabase = createSupabaseServerClient()
   if (!supabase) {
     console.warn('[api/projects/:id/export] Supabase client unavailable, checking offline store.')
@@ -117,7 +111,10 @@ export async function POST(req, { params }) {
 
   const exportCost = EXPORT_COST_CENTS
 
-  const { data: walletTransactions = [], error: walletError } = await supabase
+  const serviceClient = process.env.SUPABASE_SERVICE_ROLE_KEY ? createSupabaseServiceClient() : null
+  const walletClient = serviceClient || supabase
+
+  const { data: walletTransactions = [], error: walletError } = await walletClient
     .from('wallet_transactions')
     .select('id, amount_cents, status')
     .eq('user_id', user.id)
@@ -149,14 +146,15 @@ export async function POST(req, { params }) {
 
   const revertCharge = async (transactionId) => {
     if (!transactionId) return
-    await supabase
+    await walletClient
       .from('wallet_transactions')
       .delete()
       .eq('id', transactionId)
+      .eq('user_id', user.id)
   }
 
   const ensureSufficientAfterPending = async () => {
-    const { data: txs = [], error } = await supabase
+    const { data: txs = [], error } = await walletClient
       .from('wallet_transactions')
       .select('id, amount_cents, status')
       .eq('user_id', user.id)
@@ -177,7 +175,7 @@ export async function POST(req, { params }) {
   }
 
   // Reserve funds by creating a pending charge before writing to storage.
-  const { data: pendingCharge, error: pendingError } = await supabase
+  const { data: pendingCharge, error: pendingError } = await walletClient
     .from('wallet_transactions')
     .insert({
       user_id: user.id,
@@ -224,16 +222,22 @@ export async function POST(req, { params }) {
         project_id: project.id,
         file_path: objectPath,
         type: 'srt',
+        user_id: user.id,
       })
 
     if (exportInsertError) {
       throw Object.assign(new Error(exportInsertError.message), { status: 500 })
     }
 
-    const { error: finalizeError } = await supabase
+    const sessionToken = cookieStore.get('sb-' + (process.env.NEXT_PUBLIC_SUPABASE_URL || '').replace(/https?:\/\//, '') + '-auth-token')?.value
+
+    const updateClient = sessionToken ? supabase : walletClient
+
+    const { error: finalizeError } = await updateClient
       .from('wallet_transactions')
       .update({ status: 'succeeded' })
       .eq('id', chargeId)
+      .eq('user_id', user.id)
 
     if (finalizeError) {
       throw Object.assign(new Error(finalizeError.message), { status: 500 })

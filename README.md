@@ -8,6 +8,11 @@ Static, modern, and library-free (CSS-only UI) Next.js app skeleton in English. 
 - Copy `.env.example` → `.env.local` and add Supabase credentials
 - Dev server: `npm run dev`
 
+## Testing
+- Install dev deps (first run only): `npm install`
+- Execute unit tests: `npm run test`
+- The Vitest suite currently covers subtitle parsing and offline project storage utilities.
+
 ## Backend wiring
 The frontend is now backed by Supabase for auth, wallet, and project persistence.
 

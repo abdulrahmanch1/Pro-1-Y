@@ -3,7 +3,7 @@
 import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 
-import { EXPORT_COST_CENTS } from '@/lib/pricing'
+import { EXPORT_COST_CENTS, UPLOAD_COST_CENTS } from '@/lib/pricing'
 
 export default function UploadClient() {
   const router = useRouter()
@@ -12,6 +12,8 @@ export default function UploadClient() {
   const [file, setFile] = useState(null)
   const [error, setError] = useState(null)
   const [loading, setLoading] = useState(false)
+  const uploadCost = (UPLOAD_COST_CENTS / 100).toFixed(2)
+  const exportCost = (EXPORT_COST_CENTS / 100).toFixed(2)
 
   const handleFiles = (event) => {
     const selected = event.target.files?.[0]
@@ -147,8 +149,8 @@ export default function UploadClient() {
               <p className="mt-2">Grammar, fluency, weird word choices, tone shifts, and timing offsets vs. the speaker cadence.</p>
             </div>
             <div>
-              <h3>Exports</h3>
-              <p className="mt-2">Each export costs ${(EXPORT_COST_CENTS / 100).toFixed(2)}. Your wallet ledger stays in sync automatically.</p>
+              <h3>Credits</h3>
+              <p className="mt-2">Uploading a file deducts ${uploadCost}. Each export costs ${exportCost}. Your wallet ledger stays in sync automatically.</p>
             </div>
           </div>
         </div>
