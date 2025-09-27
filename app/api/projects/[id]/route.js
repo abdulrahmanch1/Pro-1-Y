@@ -6,12 +6,12 @@ import { getOfflineProject } from '@/lib/offline-store'
 import { readOfflineUser } from '@/lib/offline-user'
 import { isUuid } from '@/lib/utils/uuid'
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 export async function GET(req, { params }) {
-  let supabase
-  try {
-    supabase = createSupabaseServerClient()
-  } catch (error) {
-    supabase = null
+  const supabase = createSupabaseServerClient()
+  if (!supabase) {
     console.warn('[api/projects/:id] Supabase client unavailable, checking offline store.')
   }
 

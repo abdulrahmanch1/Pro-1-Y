@@ -8,6 +8,9 @@ import { generateRewriteSuggestions } from '@/lib/ai/rewrite'
 import { ensureOfflineUser, persistOfflineUserCookie } from '@/lib/offline-user'
 import { createOfflineProject } from '@/lib/offline-store'
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 const toBuffer = async (file) => {
   const arrayBuffer = await file.arrayBuffer()
   return Buffer.from(arrayBuffer)
@@ -16,13 +19,10 @@ const toBuffer = async (file) => {
 export async function POST(req) {
   console.log('[api/projects] handler start')
 
-  let supabase = null
-  let supabaseAvailable = true
-  try {
-    supabase = createSupabaseServerClient()
-  } catch (error) {
-    supabaseAvailable = false
-    console.warn('[api/projects] Supabase client unavailable, falling back to offline mode.', error?.message)
+  const supabase = createSupabaseServerClient()
+  const supabaseAvailable = Boolean(supabase)
+  if (!supabaseAvailable) {
+    console.warn('[api/projects] Supabase client unavailable, falling back to offline mode.')
   }
 
   let user = null
@@ -158,9 +158,11 @@ export async function POST(req) {
   }
 
   const hasServiceRole = Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY)
-
-  // 1. Upload the file to storage
-  const storageClient = hasServiceRole ? createSupabaseServiceClient() : supabase
+  let storageClient = hasServiceRole ? createSupabaseServiceClient() : supabase
+  if (hasServiceRole && !storageClient) {
+    console.warn('[api/projects] Service-role client unavailable; falling back to user-scoped client for storage uploads')
+    storageClient = supabase
+  }
 
   const { error: uploadError } = await storageClient.storage
     .from(bucket)

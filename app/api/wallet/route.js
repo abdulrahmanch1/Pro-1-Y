@@ -2,6 +2,9 @@ import { NextResponse } from 'next/server'
 
 import { createSupabaseServerClient } from '@/lib/supabase/server'
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 const computeBalance = (transactions = []) =>
   transactions
     .filter((tx) => tx.status === 'succeeded')
@@ -9,6 +12,10 @@ const computeBalance = (transactions = []) =>
 
 export async function GET() {
   const supabase = createSupabaseServerClient()
+  if (!supabase) {
+    return NextResponse.json({ error: 'Supabase credentials are not configured.' }, { status: 500 })
+  }
+
   const {
     data: { user },
   } = await supabase.auth.getUser()

@@ -5,6 +5,7 @@ import { parseSrt } from '@/lib/parsers/srt'
 import { generateRewriteSuggestions } from '@/lib/ai/rewrite'
 
 export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
 
 // This route is called after the initial project and file have been created.
 // It handles the heavy processing of parsing the file and creating the segments.
@@ -13,11 +14,9 @@ export async function POST(req, { params }) {
 
   console.log('[projects/process] handler start', { projectId })
 
-  let serverSupabase
-  try {
-    serverSupabase = createSupabaseServerClient()
-  } catch (error) {
-    console.error('Failed to initialise Supabase server client for processing route.', error)
+  const serverSupabase = createSupabaseServerClient()
+  if (!serverSupabase) {
+    console.error('Failed to initialise Supabase server client for processing route. Supabase env missing.')
     return NextResponse.json({ error: 'Supabase is not configured.' }, { status: 500 })
   }
 
@@ -63,12 +62,11 @@ export async function POST(req, { params }) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const supabase = process.env.SUPABASE_SERVICE_ROLE_KEY
-    ? createSupabaseServiceClient()
-    : serverSupabase
+  const serviceClient = process.env.SUPABASE_SERVICE_ROLE_KEY ? createSupabaseServiceClient() : null
+  const supabase = serviceClient || serverSupabase
 
-  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    console.warn('[projects/process] SUPABASE_SERVICE_ROLE_KEY not set; using user-scoped client fallback')
+  if (!serviceClient) {
+    console.warn('[projects/process] Service-role client unavailable; using user-scoped client fallback')
   }
 
   const {

@@ -17,12 +17,12 @@ const computePendingDebits = (transactions = []) =>
     .filter((tx) => tx.status === 'pending' && Number(tx.amount_cents || 0) < 0)
     .reduce((acc, tx) => acc + Math.abs(Number(tx.amount_cents || 0)), 0)
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 export async function POST(req, { params }) {
-  let supabase
-  try {
-    supabase = createSupabaseServerClient()
-  } catch (error) {
-    supabase = null
+  const supabase = createSupabaseServerClient()
+  if (!supabase) {
     console.warn('[api/projects/:id/export] Supabase client unavailable, checking offline store.')
   }
 

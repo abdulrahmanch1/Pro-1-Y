@@ -7,12 +7,12 @@ import { getOfflineProject, updateOfflineSegments } from '@/lib/offline-store'
 import { ensureOfflineUser, persistOfflineUserCookie, readOfflineUser } from '@/lib/offline-user'
 import { isUuid } from '@/lib/utils/uuid'
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 export async function PATCH(req, { params }) {
-  let supabase
-  try {
-    supabase = createSupabaseServerClient()
-  } catch (error) {
-    supabase = null
+  const supabase = createSupabaseServerClient()
+  if (!supabase) {
     console.warn('[api/projects/:id/segments] Supabase client unavailable, using offline store.')
   }
 
@@ -68,7 +68,8 @@ export async function PATCH(req, { params }) {
     return persistOfflineUserCookie(response, offlineUserContext)
   }
 
-  const dataClient = process.env.SUPABASE_SERVICE_ROLE_KEY ? createSupabaseServiceClient() : supabase
+  const serviceClient = process.env.SUPABASE_SERVICE_ROLE_KEY ? createSupabaseServiceClient() : null
+  const dataClient = serviceClient || supabase
 
   const rowsToUpdate = normalizedUpdates
     .map((row) => {

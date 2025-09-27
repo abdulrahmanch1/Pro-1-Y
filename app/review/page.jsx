@@ -30,12 +30,9 @@ const emptyState = () => (
 )
 
 export default async function ReviewPage({ searchParams }) {
-  let supabase
-  try {
-    supabase = createSupabaseServerClient()
-  } catch (error) {
-    supabase = null
-    console.warn('[review/page] Supabase client unavailable. Falling back to offline mode.', error?.message)
+  const supabase = createSupabaseServerClient()
+  if (!supabase) {
+    console.warn('[review/page] Supabase client unavailable. Falling back to offline mode.')
   }
 
   let user = null
@@ -56,7 +53,8 @@ export default async function ReviewPage({ searchParams }) {
   let projects
   let error
 
-  const dataClient = process.env.SUPABASE_SERVICE_ROLE_KEY ? createSupabaseServiceClient() : supabase
+  const serviceClient = process.env.SUPABASE_SERVICE_ROLE_KEY ? createSupabaseServiceClient() : null
+  const dataClient = serviceClient || supabase
 
   if (dataClient && user && (!projectId || projectIdIsUuid)) {
     let projectQuery = dataClient

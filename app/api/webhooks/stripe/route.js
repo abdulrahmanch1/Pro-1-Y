@@ -10,6 +10,9 @@ const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
 
 async function handleCheckoutSessionCompleted(session) {
   const supabase = createSupabaseServiceClient();
+  if (!supabase) {
+    return NextResponse.json({ error: 'Supabase service client not configured.' }, { status: 500 });
+  }
   const { metadata = {} } = session;
   const userId = metadata.userId;
   const amountCents = Number(metadata.amountCents);

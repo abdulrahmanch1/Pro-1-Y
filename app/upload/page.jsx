@@ -8,12 +8,9 @@ import MissingSupabaseNotice from '@/components/MissingSupabaseNotice'
 export const metadata = { title: 'Upload — Subtitle AI' }
 
 export default async function UploadPage() {
-  let supabase
+  const supabase = createSupabaseServerClient()
 
-  try {
-    supabase = createSupabaseServerClient()
-  } catch (error) {
-    console.error(error)
+  if (!supabase) {
     return <MissingSupabaseNotice action="upload captions" />
   }
   const {

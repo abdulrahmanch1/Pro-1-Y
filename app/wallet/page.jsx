@@ -13,12 +13,9 @@ const balanceFromTransactions = (transactions = []) =>
     .reduce((acc, tx) => acc + Number(tx.amount_cents || 0), 0)
 
 export default async function WalletPage() {
-  let supabase
+  const supabase = createSupabaseServerClient()
 
-  try {
-    supabase = createSupabaseServerClient()
-  } catch (error) {
-    console.error(error)
+  if (!supabase) {
     return <MissingSupabaseNotice action="manage wallet credits" />
   }
   const {

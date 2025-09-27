@@ -2,11 +2,12 @@ import { NextResponse } from 'next/server';
 import { getStripeClient } from '@/lib/stripe';
 import { createSupabaseServerClient } from '@/lib/supabase/server';
 
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
 export async function POST(req) {
-  let supabase;
-  try {
-    supabase = createSupabaseServerClient();
-  } catch (e) {
+  const supabase = createSupabaseServerClient();
+  if (!supabase) {
     return NextResponse.json({ error: 'Supabase credentials are not configured.' }, { status: 500 });
   }
 
