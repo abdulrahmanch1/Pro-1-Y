@@ -4,12 +4,9 @@ import { redirect } from 'next/navigation'
 
 import ReviewClient from './ReviewClient'
 import { createSupabaseServerClient } from '@/lib/supabase/server'
-import { createSupabaseServiceClient } from '@/lib/supabase/service'
-import { mapProjectRow } from '@/lib/api/project-transforms'
 import MissingSupabaseNotice from '@/components/MissingSupabaseNotice'
 import { getOfflineProject, listOfflineProjects } from '@/lib/offline-store'
 import { readOfflineUser } from '@/lib/offline-user'
-import { isUuid } from '@/lib/utils/uuid'
 
 export const metadata = { title: 'Review — Subtitle AI' }
 
@@ -31,9 +28,6 @@ const emptyState = () => (
 
 export default async function ReviewPage({ searchParams }) {
   const supabase = createSupabaseServerClient()
-  if (!supabase) {
-    console.warn('[review/page] Supabase client unavailable. Falling back to offline mode.')
-  }
 
   let user = null
   if (supabase) {
@@ -47,82 +41,33 @@ export default async function ReviewPage({ searchParams }) {
     redirect('/auth/sign-in?redirectTo=/review')
   }
 
+  const userId = user?.id ?? offlineUser?.id
+
+  if (!userId) {
+    return <MissingSupabaseNotice action="review captions" />
+  }
+
   const projectId = searchParams?.projectId
-  const projectIdIsUuid = typeof projectId === 'string' ? isUuid(projectId) : false
+  let project = null
 
-  let projects
-  let error
+  if (typeof projectId === 'string' && projectId.length) {
+    project = getOfflineProject({ userId, projectId })
+  }
 
-  const serviceClient = process.env.SUPABASE_SERVICE_ROLE_KEY ? createSupabaseServiceClient() : null
-  const dataClient = serviceClient || supabase
-
-  if (dataClient && user && (!projectId || projectIdIsUuid)) {
-    let projectQuery = dataClient
-      .from('projects')
-      .select(`
-        id,
-        title,
-        status,
-        created_at,
-        source_file_name,
-        segments:review_segments(
-          id,
-          index,
-          ts_start_ms,
-          ts_end_ms,
-          original_text,
-          proposed_text,
-          accepted,
-          edited_text
-        )
-      `)
-      .eq('user_id', user.id)
-
-    if (projectId) {
-      projectQuery = projectQuery.eq('id', projectId)
-    } else {
-      projectQuery = projectQuery.order('created_at', { ascending: false }).limit(1)
-    }
-
-    try {
-      const response = await projectQuery
-      projects = response.data
-      error = response.error
-    } catch (err) {
-      error = err
+  if (!project) {
+    const offlineProjects = listOfflineProjects({ userId })
+    if (offlineProjects.length) {
+      const sorted = offlineProjects.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+      project = sorted[0]
     }
   }
 
-  if (error) {
-    console.error('[review/page] failed to fetch project', error)
-  }
-
-  if (!projects || (Array.isArray(projects) && projects.length === 0)) {
-    if (projectId) {
-      const offlineProject = getOfflineProject({ userId: (user?.id) || offlineUser?.id, projectId })
-      if (offlineProject) {
-        return <ReviewClient project={offlineProject} />
-      }
-    } else {
-      const offlineProjects = listOfflineProjects({ userId: (user?.id) || offlineUser?.id })
-      if (offlineProjects.length) {
-        const sorted = offlineProjects.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
-        return <ReviewClient project={sorted[0]} />
-      }
-    }
-
-    if (!supabase) {
+  if (!project) {
+    if (!supabase && !offlineUser) {
       return <MissingSupabaseNotice action="review captions" />
     }
-
     return emptyState()
   }
 
-  const projectRow = Array.isArray(projects) ? projects[0] : projects
-  if (!projectRow) {
-    return emptyState()
-  }
-
-  const project = mapProjectRow(projectRow)
   return <ReviewClient project={project} />
 }

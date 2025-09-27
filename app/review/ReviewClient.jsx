@@ -348,19 +348,31 @@ export default function ReviewClient({ project }) {
       const contentType = response.headers.get('content-type') || ''
       if (contentType.includes('application/json')) {
         const payload = await response.json()
+
         if (payload.downloadUrl) {
           window.location.href = payload.downloadUrl
-        } else {
-          throw new Error('Export failed. Try again.')
+          return
         }
-        return
+
+        if (payload.fileName && typeof payload.content === 'string') {
+          const blob = new Blob([payload.content], { type: 'text/plain;charset=utf-8' })
+          const url = URL.createObjectURL(blob)
+          const link = document.createElement('a')
+          link.href = url
+          link.download = payload.fileName
+          document.body.appendChild(link)
+          link.click()
+          document.body.removeChild(link)
+          URL.revokeObjectURL(url)
+          return
+        }
+
+        throw new Error(payload.error || 'Export failed. Try again.')
       }
 
-      const blob = await response.blob()
-      const disposition = response.headers.get('content-disposition') || ''
-      const match = disposition.match(/filename="?([^";]+)"?/i)
-      const filename = match && match[1] ? match[1] : 'captions.srt'
-
+      const text = await response.text()
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+      const filename = `${project.title || project.sourceFileName || 'captions'}.srt`
       const url = URL.createObjectURL(blob)
       const link = document.createElement('a')
       link.href = url
@@ -374,7 +386,7 @@ export default function ReviewClient({ project }) {
     } finally {
       setExporting(false)
     }
-  }, [project.id])
+  }, [project.id, project.sourceFileName, project.title])
 
   const changedSegments = useMemo(() => segments.filter(segmentHasChanges), [segments])
   const visibleSegments = useMemo(
