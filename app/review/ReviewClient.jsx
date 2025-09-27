@@ -89,7 +89,7 @@ const ReviewSegmentRow = ({ segment, onToggleAccept, onTextEdit }) => {
   return (
     <article className="review-row">
       <div className="stack">
-        <div className="flex" style={{alignItems:'center'}}>
+        <div className="flex review-segment-meta">
           <span className={`badge ${aiSuggested ? 'badge--info' : segment.accepted ? 'badge--ok' : 'badge--warn'}`}>
             {aiSuggested ? 'AI rewrite' : segment.accepted ? 'Proposed' : 'Original'}
           </span>
@@ -331,7 +331,7 @@ export default function ReviewClient({ project }) {
               <span aria-hidden>›</span>
               <span>Download</span>
             </div>
-            <div className="flex" style={{alignItems:'center', gap: '0.8rem'}}>
+            <div className="flex review-actions" style={{alignItems:'center', gap: '0.8rem'}}>
               <span className="tag">{acceptedCount}/{visibleSegments.length || 0} accepted</span>
               <span className="tag tag--info">AI fixes: {aiFixCount}</span>
               <button
