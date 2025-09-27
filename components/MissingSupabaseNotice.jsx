@@ -13,9 +13,9 @@ export default function MissingSupabaseNotice({ action = 'use this feature' }) {
           Refer to the README for detailed setup instructions.
         </p>
         <pre className="review-line" style={{marginTop:'1.2rem', whiteSpace:'pre-wrap'}}>
-NEXT_PUBLIC_SUPABASE_URL="https://YOUR-PROJECT.supabase.co"
-NEXT_PUBLIC_SUPABASE_ANON_KEY="public-anon-key"
-SUPABASE_SERVICE_ROLE_KEY="service-role-key"
+NEXT_PUBLIC_SUPABASE_URL=&quot;https://YOUR-PROJECT.supabase.co&quot;
+NEXT_PUBLIC_SUPABASE_ANON_KEY=&quot;public-anon-key&quot;
+SUPABASE_SERVICE_ROLE_KEY=&quot;service-role-key&quot;
         </pre>
         <p className="mt-2">Restart the dev server after updating the environment to apply changes.</p>
       </div>

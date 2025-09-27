@@ -44,7 +44,7 @@ const ProcessingState = () => {
     <div className="card" style={{marginTop:'2rem', textAlign: 'center'}}>
       <span className="tag">Processing</span>
       <h3 className="mt-3">Preparing your captions...</h3>
-      <p>Your file is being processed on the server. This page will automatically update when it's ready for review.</p>
+      <p>Your file is being processed on the server. This page will automatically update when it&apos;s ready for review.</p>
       <p className="upload-hint mt-3">You can safely leave this page and come back later.</p>
     </div>
   );
